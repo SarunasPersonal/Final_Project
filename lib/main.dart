@@ -6,11 +6,14 @@ import 'package:shared_preferences/shared_preferences.dart'; // This imports sha
 
 // The main function is the starting point of the app
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized(); // Makes sure Flutter is ready before running the app
+  WidgetsFlutterBinding
+      .ensureInitialized(); // Makes sure Flutter is ready before running the app
   await SharedPreferences.getInstance(); // Prepares shared preferences for use
   runApp(
-    ChangeNotifierProvider( // Provides the theme provider to the app
-      create: (context) => ThemeProvider(), // Creates an instance of the theme provider
+    ChangeNotifierProvider(
+      // Provides the theme provider to the app
+      create: (context) =>
+          ThemeProvider(), // Creates an instance of the theme provider
       child: const MyApp(), // Sets MyApp as the main widget
     ),
   );
@@ -22,11 +25,14 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ThemeProvider>( // Listens for changes in the theme provider
+    return Consumer<ThemeProvider>(
+      // Listens for changes in the theme provider
       builder: (context, themeProvider, child) {
         return MaterialApp(
-          theme: themeProvider.getTheme(), // Uses the theme from the theme provider
-          home: const LoadingScreen(), // Sets the first screen to the loading screen
+          theme: themeProvider
+              .getTheme(), // Uses the theme from the theme provider
+          home:
+              const LoadingScreen(), // Sets the first screen to the loading screen
           debugShowCheckedModeBanner: false, // Removes the debug banner
         );
       },

@@ -3,13 +3,13 @@ import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/home_page.dart';
 import 'package:flutter_ucs_app/register_screen.dart';
 import 'package:flutter_ucs_app/forgot_password_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // Add Firebase Auth
 
 class LoginScreen extends StatelessWidget {
   const LoginScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // Controllers for email and password input fields
     final emailController = TextEditingController();
     final passwordController = TextEditingController();
 
@@ -17,16 +17,14 @@ class LoginScreen extends StatelessWidget {
       body: Center(
         child: SingleChildScrollView(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 400), // Limit the width of the content
+            constraints: const BoxConstraints(maxWidth: 400),
             child: Padding(
-              padding: const EdgeInsets.all(24.0), // Add padding around the content
+              padding: const EdgeInsets.all(24.0),
               child: Column(
-                mainAxisSize: MainAxisSize.min, // Minimize the column size
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  // App logo
                   Image.asset('assets/logo.png', width: 120, height: 120),
-                  const SizedBox(height: 30), // Spacing between elements
-                  // Welcome text
+                  const SizedBox(height: 30),
                   const Text(
                     'Welcome to UCS Colab',
                     style: TextStyle(
@@ -35,8 +33,7 @@ class LoginScreen extends StatelessWidget {
                       color: primaryColor,
                     ),
                   ),
-                  const SizedBox(height: 20), // Spacing between elements
-                  // Email input field
+                  const SizedBox(height: 20),
                   TextField(
                     controller: emailController,
                     decoration: const InputDecoration(
@@ -44,56 +41,65 @@ class LoginScreen extends StatelessWidget {
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.email, color: primaryColor),
                     ),
-                    keyboardType: TextInputType.emailAddress, // Set input type to email
+                    keyboardType: TextInputType.emailAddress,
                   ),
-                  const SizedBox(height: 20), // Spacing between elements
-                  // Password input field
+                  const SizedBox(height: 20),
                   TextField(
                     controller: passwordController,
-                    obscureText: true, // Hide the password text
+                    obscureText: true,
                     decoration: const InputDecoration(
                       labelText: 'Password',
                       border: OutlineInputBorder(),
                       prefixIcon: Icon(Icons.lock, color: primaryColor),
                     ),
                   ),
-                  const SizedBox(height: 20), // Spacing between elements
-                  // Login button
+                  const SizedBox(height: 20),
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: primaryColor, // Set button color
-                      minimumSize: const Size(double.infinity, 50), // Full-width button
+                      backgroundColor: primaryColor,
+                      minimumSize: const Size(double.infinity, 50),
                     ),
-                    onPressed: () {
-                      // Check if the email and password match the admin credentials
-                      if (emailController.text == 'admin@btc.ac.uk' &&
-                          passwordController.text == 'admin') {
-                        // Set the current user
-                        CurrentUser.login(emailController.text, 'admin1');
-                        
-                        // Navigate to the home page
-                        Navigator.push(
+                    onPressed: () async {
+                      final email = emailController.text.trim();
+                      final password = passwordController.text.trim();
+
+                      try {
+                        final credential = await FirebaseAuth.instance
+                            .signInWithEmailAndPassword(
+                                email: email, password: password);
+
+                        // Optional: save user session or ID
+                        CurrentUser.login(email, credential.user?.uid ?? 'unknown');
+
+                        Navigator.pushReplacement(
                           context,
                           MaterialPageRoute(builder: (_) => const HomePage()),
                         );
-                      } else {
-                        // Show an error message if credentials are invalid
+                      } on FirebaseAuthException catch (e) {
+                        String errorMsg;
+                        switch (e.code) {
+                          case 'user-not-found':
+                            errorMsg = 'No user found with this email.';
+                            break;
+                          case 'wrong-password':
+                            errorMsg = 'Incorrect password.';
+                            break;
+                          default:
+                            errorMsg = 'Login failed: ${e.message}';
+                        }
+
                         ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Invalid email or password'),
-                          ),
+                          SnackBar(content: Text(errorMsg)),
                         );
                       }
                     },
                     child: const Text(
                       'LOG IN',
-                      style: TextStyle(color: secondaryColor), // Set text color
+                      style: TextStyle(color: secondaryColor),
                     ),
                   ),
-                  // Create user button
                   TextButton(
                     onPressed: () {
-                      // Navigate to the register screen
                       Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const RegisterScreen()),
@@ -101,13 +107,11 @@ class LoginScreen extends StatelessWidget {
                     },
                     child: const Text(
                       'CREATE USER',
-                      style: TextStyle(color: primaryColor), // Set text color
+                      style: TextStyle(color: primaryColor),
                     ),
                   ),
-                  // Forgot password button
                   TextButton(
                     onPressed: () {
-                      // Navigate to the forgot password screen
                       Navigator.push(
                         context,
                         MaterialPageRoute(builder: (_) => const ForgotPasswordScreen()),
@@ -115,7 +119,7 @@ class LoginScreen extends StatelessWidget {
                     },
                     child: const Text(
                       'FORGOT PASSWORD?',
-                      style: TextStyle(color: primaryColor), // Set text color
+                      style: TextStyle(color: primaryColor),
                     ),
                   ),
                 ],
