@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
-import 'dart:async';
+import 'package:flutter_ucs_app/home_page.dart';
 import 'package:flutter_ucs_app/login_screen.dart';
+import 'package:flutter_ucs_app/services/firebase_auth_service.dart';
+import 'package:provider/provider.dart';
+import 'dart:async';
 
 class LoadingScreen extends StatefulWidget {
   const LoadingScreen({super.key});
@@ -11,41 +14,49 @@ class LoadingScreen extends StatefulWidget {
 }
 
 class _LoadingScreenState extends State<LoadingScreen> with SingleTickerProviderStateMixin {
-  late AnimationController _controller; // Animation controller to manage the animation lifecycle
-  late Animation<double> _animation; // Animation object for controlling the fade effect
+  late AnimationController _controller;
+  late Animation<double> _animation;
 
   @override
   void initState() {
     super.initState();
 
-    // Initialize the animation controller with a duration of 3 seconds
     _controller = AnimationController(
       duration: const Duration(seconds: 3),
       vsync: this,
     );
 
-    // Define a sequence of animations for the fade effect
     _animation = TweenSequence<double>([
-      TweenSequenceItem(tween: Tween(begin: 0.0, end: 1.0), weight: 20), // Fade in
-      TweenSequenceItem(tween: ConstantTween(1.0), weight: 20), // Stay fully visible
-      TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.0), weight: 20), // Fade out
+      TweenSequenceItem(tween: Tween(begin: 0.0, end: 1.0), weight: 20),
+      TweenSequenceItem(tween: ConstantTween(1.0), weight: 20),
+      TweenSequenceItem(tween: Tween(begin: 1.0, end: 0.0), weight: 20),
     ]).animate(_controller);
 
-    // Start the animation
     _controller.forward();
 
-    // Navigate to the LoginScreen after 3 seconds
+    // Check authentication status after animation
     Timer(const Duration(seconds: 3), () {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
-      );
+      if (!mounted) return;
+      
+      final authService = Provider.of<FirebaseAuthService>(context, listen: false);
+      if (authService.isLoggedIn) {
+        // Navigate to home if user is logged in
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const HomePage()),
+        );
+      } else {
+        // Navigate to login if user is not logged in
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const LoginScreen()),
+        );
+      }
     });
   }
 
   @override
   void dispose() {
-    // Dispose of the animation controller to free resources
     _controller.dispose();
     super.dispose();
   }
@@ -53,15 +64,14 @@ class _LoadingScreenState extends State<LoadingScreen> with SingleTickerProvider
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: primaryColor, // Set the background color
+      backgroundColor: primaryColor,
       body: Center(
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center, // Center the content vertically
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // FadeTransition widget to apply the fade animation to the logo
             FadeTransition(
-              opacity: _animation, // Bind the animation to the opacity property
-              child: Image.asset('assets/logo.png', width: 200), // Display the logo
+              opacity: _animation,
+              child: Image.asset('assets/logo.png', width: 200),
             ),
           ],
         ),

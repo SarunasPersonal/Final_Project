@@ -12,15 +12,13 @@ dependencies:
   intl: ^0.20.2
   cupertino_icons: ^1.0.2
   http: ^1.1.0  # Added for chatbot API calls
-  firebase_core: ^2.15.0
-  firebase_auth: ^4.12.0
+  firebase_core: ^2.32.0
+  firebase_auth: ^4.16.0
   js: ^0.6.7
-
-
-  
-  # Required for accessibility features
+  shared_preferences: ^2.5.3 # Required for accessibility features
   provider: ^6.1.4
-  shared_preferences: ^2.5.3
+  logging: ^1.2.0
+
 
 dev_dependencies:
   flutter_test:

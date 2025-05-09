@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "463068225112",
-    "project_id": "ucscollabproject",
-    "storage_bucket": "ucscollabproject.firebasestorage.app"
+    "project_number": "1035535362739",
+    "project_id": "ucsapp-2e572",
+    "storage_bucket": "ucsapp-2e572.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:463068225112:android:f486900b4792e5d844b42d",
+        "mobilesdk_app_id": "1:1035535362739:android:632382dd53d8903d311ec6",
         "android_client_info": {
           "package_name": "com.example.my_app"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyAq0XtBmehQUy0AwEdaqk0LGE8mjruK0gs"
+          "current_key": "AIzaSyB4i11I__LzCs0mmNos3DcUiJrEHdqfSoc"
         }
       ],
       "services": {
