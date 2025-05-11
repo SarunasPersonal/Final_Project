@@ -10,7 +10,8 @@ import 'package:flutter_ucs_app/chat_bot_screen.dart';
 import 'package:flutter_ucs_app/admin/admin_panel.dart'; // Import the admin panel
 import 'package:flutter_ucs_app/services/firebase_auth_service.dart'; // Import the auth service
 import 'package:provider/provider.dart';
-import 'package:flutter_ucs_app/models/current_user.dart';
+import 'package:flutter_ucs_app/admin/models/current_user.dart';
+
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});

@@ -1,19 +1,17 @@
 class CurrentUser {
-  static String? userId;
+  static String? uid;
   static String? email;
   static bool isAdmin = false;
 
-  // Login method to set user data
-  static void login(String userEmail, String id, {bool admin = false}) {
+  static void login(String userEmail, String userId, {bool admin = false}) {
     email = userEmail;
-    userId = id;
+    uid = userId;
     isAdmin = admin;
   }
 
-  // Logout method to clear user data
   static void logout() {
     email = null;
-    userId = null;
+    uid = null;
     isAdmin = false;
   }
 }
