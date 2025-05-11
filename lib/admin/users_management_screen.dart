@@ -11,6 +11,21 @@ class UsersManagementScreen extends StatefulWidget {
   @override
   State<UsersManagementScreen> createState() => _UsersManagementScreenState();
 }
+class UserData {
+  final String id;
+  final String name;
+  final String email;
+  final String role;
+  final bool isCurrentUser;
+  
+  UserData({
+    required this.id,
+    required this.name,
+    required this.email,
+    required this.role,
+    required this.isCurrentUser,
+  });
+}
 
 class _UsersManagementScreenState extends State<UsersManagementScreen> {
   final logger = Logger('UsersManagementScreen');
@@ -47,29 +62,55 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
     });
     
     try {
-      // Directly create a sample list with current user
+      // Get the current user
       final currentUser = _auth.currentUser;
       List<UserData> users = [];
       
       if (currentUser != null) {
-        // Add current user as admin
+        // Check if current user is in Firestore
+        DocumentSnapshot currentUserDoc = await _firestore
+            .collection('users')
+            .doc(currentUser.uid)
+            .get();
+            
+        // Add current user as admin if not in Firestore yet
+        if (!currentUserDoc.exists) {
+          // Add user to users collection
+          await _firestore.collection('users').doc(currentUser.uid).set({
+            'name': currentUser.displayName ?? 'Admin User',
+            'email': currentUser.email ?? 'No Email',
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+        
+        // Get admin status
+        final adminDoc = await _firestore
+            .collection('admin_users')
+            .doc(currentUser.uid)
+            .get();
+            
+        // Ensure admin status if not already set
+        if (!adminDoc.exists) {
+          await _firestore.collection('admin_users').doc(currentUser.uid).set({
+            'role': 'admin',
+            'email': currentUser.email,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+        }
+        
+        // Add current user to the list
         users.add(UserData(
           id: currentUser.uid,
-          name: currentUser.displayName ?? 'Admin User',
+          name: currentUserDoc.exists ? 
+            (currentUserDoc.data() as Map<String, dynamic>)['name'] ?? 'Admin User' : 
+            currentUser.displayName ?? 'Admin User',
           email: currentUser.email ?? 'No Email',
           role: 'Admin',
           isCurrentUser: true,
         ));
-        
-        // Ensure admin status in Firestore
-        await _firestore.collection('admin_users').doc(currentUser.uid).set({
-          'role': 'admin',
-          'email': currentUser.email,
-          'createdAt': FieldValue.serverTimestamp(),
-        });
       }
       
-      // Fetch any additional users from Firestore
+      // Fetch all users from Firestore
       final QuerySnapshot userSnapshot = await _firestore.collection('users').get();
       
       // Get admin users
@@ -205,6 +246,15 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
                     keyboardType: TextInputType.emailAddress,
                   ),
                   const SizedBox(height: 16),
+                  TextField(
+                    controller: _passwordController,
+                    decoration: const InputDecoration(
+                      labelText: 'Password (for Firebase Auth user)',
+                      border: OutlineInputBorder(),
+                    ),
+                    obscureText: true,
+                  ),
+                  const SizedBox(height: 16),
                   SwitchListTile(
                     title: const Text('Admin User'),
                     value: _isAdmin,
@@ -229,7 +279,7 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
                 onPressed: () {
                   if (_validateForm()) {
                     Navigator.pop(context);
-                    _addUserToFirestore();
+                    _addUserToFirebase();
                   }
                 },
                 child: const Text(
@@ -255,17 +305,50 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
       return false;
     }
     
+    if (_passwordController.text.isNotEmpty && _passwordController.text.length < 6) {
+      _showSnackBar('Password must be at least 6 characters (or leave blank for Firestore-only user)');
+      return false;
+    }
+    
     return true;
   }
   
-  Future<void> _addUserToFirestore() async {
+  Future<void> _addUserToFirebase() async {
     setState(() {
       _isLoading = true;
     });
     
     try {
+      String userId;
+      
+      // If password is provided, create a Firebase Auth user
+      if (_passwordController.text.isNotEmpty) {
+        try {
+          // Create user in Firebase Auth
+          UserCredential userCred = await _auth.createUserWithEmailAndPassword(
+            email: _emailController.text.trim(),
+            password: _passwordController.text,
+          );
+          
+          userId = userCred.user!.uid;
+          logger.info('Created Firebase Auth user with ID: $userId');
+        } catch (authError) {
+          logger.warning('Error creating Firebase Auth user: $authError');
+          _showSnackBar('Error creating Firebase Auth user: $authError');
+          setState(() {
+            _isLoading = false;
+          });
+          return;
+        }
+      } else {
+        // For Firestore-only user, generate a document with auto ID
+        final docRef = _firestore.collection('users').doc();
+        userId = docRef.id;
+        logger.info('Using generated Firestore document ID: $userId');
+      }
+      
       // Add user to Firestore
-      final docRef = await _firestore.collection('users').add({
+      await _firestore.collection('users').doc(userId).set({
         'name': _nameController.text.trim(),
         'email': _emailController.text.trim(),
         'createdAt': FieldValue.serverTimestamp(),
@@ -273,7 +356,7 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
       
       // If admin, add to admin_users collection
       if (_isAdmin) {
-        await _firestore.collection('admin_users').doc(docRef.id).set({
+        await _firestore.collection('admin_users').doc(userId).set({
           'role': 'admin',
           'email': _emailController.text.trim(),
           'createdAt': FieldValue.serverTimestamp(),
@@ -420,7 +503,7 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              _deleteUserFromFirestore(user.id);
+              _deleteUserFromFirebase(user.id, user.email);
             },
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
@@ -429,31 +512,35 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
     );
   }
   
-  Future<void> _deleteUserFromFirestore(String userId) async {
-    setState(() {
-      _isLoading = true;
-    });
+  Future<void> _deleteUserFromFirebase(String userId, String email) async {
+  setState(() {
+    _isLoading = true;
+  });
+  
+  try {
+    // Note about Firebase Auth users
+    logger.info('Attempting to delete user from Firestore: $userId');
+    _showSnackBar('Note: If this user has a Firebase Auth account, it would need to be deleted using the Firebase Admin SDK');
     
-    try {
-      // Check if admin and remove if needed
-      final adminDoc = await _firestore.collection('admin_users').doc(userId).get();
-      if (adminDoc.exists) {
-        await _firestore.collection('admin_users').doc(userId).delete();
-      }
-      
-      // Delete user from Firestore
-      await _firestore.collection('users').doc(userId).delete();
-      
-      _showSnackBar('User deleted successfully');
-      await _loadUsers();
-    } catch (e) {
-      logger.warning('Error deleting user: $e');
-      _showSnackBar('Error: ${e.toString()}');
-      setState(() {
-        _isLoading = false;
-      });
+    // Check if admin and remove if needed
+    final adminDoc = await _firestore.collection('admin_users').doc(userId).get();
+    if (adminDoc.exists) {
+      await _firestore.collection('admin_users').doc(userId).delete();
     }
+    
+    // Delete user from Firestore
+    await _firestore.collection('users').doc(userId).delete();
+    
+    _showSnackBar('User deleted from Firestore successfully');
+    await _loadUsers();
+  } catch (e) {
+    logger.warning('Error deleting user: $e');
+    _showSnackBar('Error: ${e.toString()}');
+    setState(() {
+      _isLoading = false;
+    });
   }
+}
   
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -640,21 +727,4 @@ class _UsersManagementScreenState extends State<UsersManagementScreen> {
       ),
     );
   }
-}
-
-// Simple data class for user information
-class UserData {
-  final String id;
-  final String name;
-  final String email;
-  final String role;
-  final bool isCurrentUser;
-  
-  UserData({
-    required this.id,
-    required this.name,
-    required this.email,
-    required this.role,
-    required this.isCurrentUser,
-  });
 }

@@ -1,3 +1,4 @@
+// lib/register_screen.dart
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
@@ -17,6 +18,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   final confirmPasswordController = TextEditingController();
+  final nameController = TextEditingController(); // Added for user's name
   
   // Loading and error state
   bool _isLoading = false;
@@ -28,6 +30,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     emailController.dispose();
     passwordController.dispose();
     confirmPasswordController.dispose();
+    nameController.dispose(); // Dispose name controller
     super.dispose();
   }
   
@@ -99,7 +102,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (!mounted) return;
       
       if (user != null) {
-        // Registration successful, navigate to home page
+        // Registration successful
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text('Account created successfully!'),
