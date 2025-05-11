@@ -24,17 +24,12 @@ class _AdminPanelState extends State<AdminPanel> {
   @override
   void initState() {
     super.initState();
-    // Initialize screens - make sure to create these files
+    // Initialize screens - now using all the imported screens
     _screens = [
       const DashboardScreen(),
       const BookingsManagementScreen(),
-      // Uncomment these when you implement these screens
-      // const UsersManagementScreen(),
-      // const RoomsManagementScreen(),
-      
-      // Temporary placeholders until you create the actual screens
-      const Center(child: Text('Users Management - Coming Soon')),
-      const Center(child: Text('Rooms Management - Coming Soon')),
+      const UsersManagementScreen(),  // Using the imported screen
+      const RoomsManagementScreen(),  // Using the imported screen
     ];
   }
 

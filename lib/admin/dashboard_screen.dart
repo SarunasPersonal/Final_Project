@@ -20,6 +20,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _todayBookings = 0;
   bool _isLoading = true;
   final BookingService _bookingService = BookingService();
+  final logger = Logger('DashboardScreen');
 
   // Data for charts
   List<FlSpot> _weeklyBookingSpots = [];
@@ -36,8 +37,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       // Get all bookings
       final allBookings = _bookingService.getAllBookings();
-      final _logger = Logger('DashboardScreen');
-
+      
       // Get today's bookings
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
@@ -65,6 +65,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         userCount = userSnapshot.docs.length;
       } catch (e) {
         // Fallback if Firestore connection fails
+        logger.warning('Error loading users count: $e');
         userCount = 25; // Mock value
       }
 
@@ -77,7 +78,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         });
       }
     } catch (e) {
-      _logger.warning('Error loading dashboard data: $e');
+      logger.warning('Error loading dashboard data: $e');
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -111,8 +112,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (booking.dateTime.isBefore(monday)) continue;
 
       // Skip bookings from next weeks
-      if (booking.dateTime.isAfter(monday.add(const Duration(days: 7))))
+      if (booking.dateTime.isAfter(monday.add(const Duration(days: 7)))) {
         continue;
+      }
 
       // Get day of week (0 = Monday, 6 = Sunday)
       final dayOfWeek = booking.dateTime.weekday - 1;
@@ -148,12 +150,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     List<PieChartSectionData> sections = [];
     int i = 0;
 
-    bookingsByType.forEach((type, count) {
-      final double percentage = count / bookings.length;
+    bookingsByType.forEach((type, countValue) {
+      final double percentage = countValue / bookings.length;
       sections.add(
         PieChartSectionData(
           color: colors[i % colors.length],
-          value: count.toDouble(),
+          value: countValue.toDouble(),
           title: '${(percentage * 100).toStringAsFixed(1)}%',
           radius: 80,
           titleStyle: const TextStyle(
