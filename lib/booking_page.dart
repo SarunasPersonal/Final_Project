@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/booking_model.dart';
+import 'package:flutter_ucs_app/models/room_model.dart';
 import 'package:intl/intl.dart';
 
 class BookingPage extends StatefulWidget {
@@ -15,10 +16,15 @@ class _BookingPageState extends State<BookingPage> {
   DateTime? selectedDateTime;
   String? formattedDateTime;
   final BookingService _bookingService = BookingService();
+  final RoomService _roomService = RoomService();
   bool _isLoading = false;
+  bool _isLoadingRooms = true;
   
   // Room selection
   RoomType _selectedRoomType = RoomType.quietRoom;
+  Room? _selectedRoom;
+  List<Room> _availableRooms = [];
+  
   final Map<RoomFeature, bool> _selectedFeatures = {
     for (var feature in RoomFeature.values) feature: false
   };
@@ -28,6 +34,12 @@ class _BookingPageState extends State<BookingPage> {
   final FocusNode _featuresFocusNode = FocusNode();
   final FocusNode _dateTimeFocusNode = FocusNode();
   final FocusNode _confirmButtonFocusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRooms();
+  }
 
   @override
   void dispose() {
@@ -44,7 +56,63 @@ class _BookingPageState extends State<BookingPage> {
     
     super.dispose();
   }
+  
+  // Load rooms for the selected campus
+  Future<void> _loadRooms() async {
+    setState(() {
+      _isLoadingRooms = true;
+    });
+    
+    try {
+      final rooms = await _roomService.getRoomsByCampus(widget.location);
+      
+      setState(() {
+        _availableRooms = rooms.where((room) => room.isAvailable).toList();
+        _isLoadingRooms = false;
+        
+        // Filter rooms by selected type
+        _filterRoomsByType();
+      });
+    } catch (e) {
+      print('Error loading rooms: $e');
+      setState(() {
+        _isLoadingRooms = false;
+      });
+      
+      _showSnackBar('Error loading rooms. Please try again.', color: Colors.red);
+    }
+  }
+  
+  // Filter rooms by selected type
+  void _filterRoomsByType() {
+    List<Room> filteredRooms = _availableRooms.where((room) => 
+      room.type == _selectedRoomType
+    ).toList();
+    
+    setState(() {
+      _selectedRoom = filteredRooms.isNotEmpty ? filteredRooms.first : null;
+      
+      // Reset features based on selected room
+      if (_selectedRoom != null) {
+        for (var feature in RoomFeature.values) {
+          _selectedFeatures[feature] = _selectedRoom!.features.contains(feature);
+        }
+      } else {
+        _resetFeatures();
+      }
+    });
+  }
 
+  // Check if the selected room is available at the selected time
+  bool _isRoomAvailableAtSelectedTime() {
+    if (_selectedRoom == null || selectedDateTime == null) {
+      return false;
+    }
+    
+    return _bookingService.isRoomAvailable(_selectedRoom!.id, selectedDateTime!);
+  }
+  
+  // Update the date/time selection method to check room availability
   void _selectDateTime(BuildContext context) async {
     final DateTime? pickedDate = await showDatePicker(
       context: context,
@@ -77,7 +145,16 @@ class _BookingPageState extends State<BookingPage> {
       formattedDateTime = _formatDateTime(newDateTime);
     });
     
-    _showSnackBar('Selected date and time: $formattedDateTime');
+    // Check if the room is available at the selected time
+    if (_selectedRoom != null && !_isRoomAvailableAtSelectedTime()) {
+      _showSnackBar(
+        'The selected room is not available at this time. Please select a different time or room.',
+        color: Colors.red,
+        duration: const Duration(seconds: 3),
+      );
+    } else {
+      _showSnackBar('Selected date and time: $formattedDateTime');
+    }
   }
 
   Widget _buildDateTimePickerTheme(BuildContext context, Widget? child, String label) {
@@ -108,6 +185,11 @@ class _BookingPageState extends State<BookingPage> {
       _showSnackBar('Please select a date and time');
       return;
     }
+    
+    if (_selectedRoom == null) {
+      _showSnackBar('Please select a room');
+      return;
+    }
 
     final List<RoomFeature> features = _getSelectedFeatures();
 
@@ -127,9 +209,11 @@ class _BookingPageState extends State<BookingPage> {
                     text: TextSpan(
                       style: const TextStyle(color: Colors.black, fontSize: 16),
                       children: [
-                        const TextSpan(text: 'Are you sure you want to book a '),
+                        const TextSpan(text: 'Are you sure you want to book '),
+                        _highlightText(_selectedRoom!.name),
+                        const TextSpan(text: ' ('),
                         _highlightText(_selectedRoomType.displayName),
-                        const TextSpan(text: ' at '),
+                        const TextSpan(text: ') at '),
                         _highlightText(widget.location),
                         const TextSpan(text: ' for '),
                         _highlightText(formattedDateTime ?? ''),
@@ -137,6 +221,21 @@ class _BookingPageState extends State<BookingPage> {
                       ],
                     ),
                   ),
+                  
+                  if (_selectedRoom != null) ...[
+                    SizedBox(height: 12),
+                    Text(
+                      'Room Capacity: ${_selectedRoom!.capacity} people',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                  
+                  if (_selectedRoom != null && _selectedRoom!.location != null) ...[
+                    SizedBox(height: 8),
+                    Text('Location: ${_selectedRoom!.location}'),
+                  ],
                   
                   if (features.isNotEmpty) ..._buildFeaturesList(features),
                 ],
@@ -210,13 +309,14 @@ class _BookingPageState extends State<BookingPage> {
     try {
       final List<RoomFeature> features = _getSelectedFeatures();
           
-      // Create a new booking
+      // Create a new booking with the room ID included
       final newBooking = Booking(
         location: widget.location,
         dateTime: selectedDateTime!,
         userId: CurrentUser.userId ?? 'unknown',
         roomType: _selectedRoomType,
         features: features,
+        roomId: _selectedRoom?.id, // Include the selected room's ID
       );
       
       _bookingService.addBooking(newBooking);
@@ -224,7 +324,7 @@ class _BookingPageState extends State<BookingPage> {
       if (!mounted) return;
       
       _showSnackBar(
-        '${_selectedRoomType.displayName} booking confirmed at ${widget.location} on $formattedDateTime',
+        'Booking confirmed for ${_selectedRoom?.name ?? _selectedRoomType.displayName} at ${widget.location} on $formattedDateTime',
         color: Colors.green,
         duration: const Duration(seconds: 4),
       );
@@ -256,6 +356,68 @@ class _BookingPageState extends State<BookingPage> {
     );
   }
 
+  // Method to show existing bookings for the selected room
+  void _showExistingBookings() {
+    if (_selectedRoom == null) {
+      _showSnackBar('Please select a room first');
+      return;
+    }
+    
+    // Get bookings for the selected room
+    final roomBookings = _bookingService.getRoomBookings(_selectedRoom!.id);
+    
+    // Sort bookings by date/time
+    roomBookings.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+    
+    // Only show future bookings
+    final futureBookings = roomBookings
+        .where((booking) => booking.dateTime.isAfter(DateTime.now()))
+        .toList();
+    
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Existing Bookings for ${_selectedRoom!.name}'),
+          content: Container(
+            width: double.maxFinite,
+            child: futureBookings.isEmpty
+                ? const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(20.0),
+                      child: Text(
+                        'No upcoming bookings for this room',
+                        style: TextStyle(fontStyle: FontStyle.italic),
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: futureBookings.length,
+                    itemBuilder: (context, index) {
+                      final booking = futureBookings[index];
+                      final formattedTime = DateFormat('EEEE, MMM d').add_jm().format(booking.dateTime);
+                      
+                      return ListTile(
+                        leading: Icon(Icons.event, color: primaryColor),
+                        title: Text(formattedTime),
+                        subtitle: Text('Booked by: ${booking.userId}'),
+                      );
+                    },
+                  ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text('Close'),
+              style: TextButton.styleFrom(foregroundColor: primaryColor),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void _showHelpDialog() {
     showDialog(
       context: context,
@@ -274,7 +436,7 @@ class _BookingPageState extends State<BookingPage> {
                 ),
                 const SizedBox(height: 10),
                 _buildHelpItem('1. Select a room type (Quiet Room, Conference Room, or Study Room)'),
-                _buildHelpItem('2. Choose required features for your room (for Conference and Study rooms)'),
+                _buildHelpItem('2. Choose a specific room from the available options'),
                 _buildHelpItem('3. Select a date and time for your booking'),
                 _buildHelpItem('4. Review and confirm your booking details'),
                 const SizedBox(height: 10),
@@ -370,43 +532,53 @@ class _BookingPageState extends State<BookingPage> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildLocationHeader(),
-              const SizedBox(height: 30),
-              
-              // Room Type Selection
-              _buildSectionHeader('Select Room Type'),
-              const SizedBox(height: 15),
-              
-              _buildRoomTypeSelector(),
-              
-              // Room Features (only visible for conference and study rooms)
-              if (_selectedRoomType != RoomType.quietRoom) _buildRoomFeatures(),
-              
-              const SizedBox(height: 30),
-              _buildSectionHeader('Select Date & Time'),
-              const SizedBox(height: 10),
-              
-              const Text(
-                'Please select a date and time for your appointment:',
-                style: TextStyle(fontSize: 16, color: Colors.grey),
+      body: _isLoadingRooms
+          ? Center(child: CircularProgressIndicator(color: primaryColor))
+          : SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildLocationHeader(),
+                    const SizedBox(height: 30),
+                    
+                    // Room Type Selection
+                    _buildSectionHeader('Select Room Type'),
+                    const SizedBox(height: 15),
+                    
+                    _buildRoomTypeSelector(),
+                    
+                    // Available Rooms Selection
+                    const SizedBox(height: 30),
+                    _buildSectionHeader('Available Rooms'),
+                    const SizedBox(height: 15),
+                    
+                    _buildRoomsSelector(),
+                    
+                    // Room Features (only visible if selected room has features)
+                    if (_selectedRoom != null && _selectedRoom!.features.isNotEmpty) 
+                      _buildRoomFeatures(),
+                    
+                    const SizedBox(height: 30),
+                    _buildSectionHeader('Select Date & Time'),
+                    const SizedBox(height: 10),
+                    
+                    const Text(
+                      'Please select a date and time for your appointment:',
+                      style: TextStyle(fontSize: 16, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 20),
+                    _buildDateTimeSelector(),
+                    
+                    if (selectedDateTime != null) _buildSelectedDateTime(),
+                    
+                    const SizedBox(height: 40),
+                    _buildConfirmButton(),
+                  ],
+                ),
               ),
-              const SizedBox(height: 20),
-              _buildDateTimeSelector(),
-              
-              if (selectedDateTime != null) _buildSelectedDateTime(),
-              
-              const SizedBox(height: 40),
-              _buildConfirmButton(),
-            ],
-          ),
-        ),
-      ),
+            ),
     );
   }
 
@@ -493,6 +665,9 @@ class _BookingPageState extends State<BookingPage> {
             ? 'Meeting space for groups' 
             : 'Collaborative space for study groups';
     
+    // Count available rooms of this type
+    final availableCount = _availableRooms.where((room) => room.type == type).length;
+    
     return RadioListTile<RoomType>(
       title: Semantics(
         label: '${type.displayName} option',
@@ -501,6 +676,21 @@ class _BookingPageState extends State<BookingPage> {
             Icon(type.icon, color: primaryColor),
             const SizedBox(width: 10),
             Text(type.displayName),
+            SizedBox(width: 8),
+            Container(
+              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: availableCount > 0 ? Colors.green.shade100 : Colors.red.shade100,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$availableCount available',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: availableCount > 0 ? Colors.green.shade800 : Colors.red.shade800,
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -508,18 +698,107 @@ class _BookingPageState extends State<BookingPage> {
       value: type,
       groupValue: _selectedRoomType,
       activeColor: primaryColor,
-      onChanged: (RoomType? value) {
+      onChanged: availableCount > 0 ? (RoomType? value) {
         if (value != null) {
           setState(() {
             _selectedRoomType = value;
-            if (value == RoomType.quietRoom) {
-              _resetFeatures();
-            }
+            _filterRoomsByType();
           });
           
           _showSnackBar('Selected ${value.displayName}', duration: const Duration(seconds: 1));
         }
-      },
+      } : null,
+    );
+  }
+  
+  Widget _buildRoomsSelector() {
+    // Filter rooms by selected type
+    final roomsOfSelectedType = _availableRooms.where((room) => 
+      room.type == _selectedRoomType
+    ).toList();
+    
+    if (roomsOfSelectedType.isEmpty) {
+      return Card(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              Icon(Icons.meeting_room_outlined, size: 48, color: Colors.grey),
+              SizedBox(height: 16),
+              Text(
+                'No ${_selectedRoomType.displayName}s available',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              SizedBox(height: 8),
+              Text(
+                'Please select a different room type or try again later.',
+                style: TextStyle(color: Colors.grey),
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Column(
+        children: roomsOfSelectedType.map((room) => _buildRoomOption(room)).toList(),
+      ),
+    );
+  }
+  
+  Widget _buildRoomOption(Room room) {
+    return Column(
+      children: [
+        RadioListTile<Room>(
+          title: Text(room.name),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Capacity: ${room.capacity} people'),
+              if (room.location != null)
+                Text('Location: ${room.location}'),
+            ],
+          ),
+          value: room,
+          groupValue: _selectedRoom,
+          activeColor: primaryColor,
+          onChanged: (Room? value) {
+            if (value != null) {
+              setState(() {
+                _selectedRoom = value;
+                
+                // Update features based on selected room
+                for (var feature in RoomFeature.values) {
+                  _selectedFeatures[feature] = value.features.contains(feature);
+                }
+              });
+              
+              _showSnackBar('Selected ${value.name}', duration: const Duration(seconds: 1));
+            }
+          },
+        ),
+        
+        // Add View Bookings button
+        if (_selectedRoom == room) 
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8.0, left: 16.0, right: 16.0),
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                icon: Icon(Icons.calendar_month, size: 16, color: primaryColor),
+                label: Text('View Existing Bookings', style: TextStyle(color: primaryColor)),
+                onPressed: _showExistingBookings,
+              ),
+            ),
+          ),
+        
+        Divider(height: 1),
+      ],
     );
   }
 
@@ -531,45 +810,32 @@ class _BookingPageState extends State<BookingPage> {
         _buildSectionHeader('Room Features'),
         const SizedBox(height: 10),
         
-        Focus(
-          focusNode: _featuresFocusNode,
-          child: Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        Card(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
             child: Column(
-              children: RoomFeature.values.map((feature) => _buildFeatureOption(feature)).toList(),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'This room includes:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _selectedRoom!.features.map((feature) => Chip(
+                    avatar: Icon(feature.icon, size: 16, color: primaryColor),
+                    label: Text(feature.displayName),
+                    backgroundColor: primaryColor.withAlpha(26),
+                  )).toList(),
+                ),
+              ],
             ),
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildFeatureOption(RoomFeature feature) {
-    return CheckboxListTile(
-      title: Semantics(
-        label: '${feature.displayName} feature',
-        child: Row(
-          children: [
-            Icon(feature.icon, color: primaryColor),
-            const SizedBox(width: 10),
-            Text(feature.displayName),
-          ],
-        ),
-      ),
-      value: _selectedFeatures[feature],
-      activeColor: primaryColor,
-      onChanged: (bool? value) {
-        if (value != null) {
-          setState(() {
-            _selectedFeatures[feature] = value;
-          });
-          
-          _showSnackBar(
-            value ? 'Added ${feature.displayName}' : 'Removed ${feature.displayName}',
-            duration: const Duration(seconds: 1),
-          );
-        }
-      },
     );
   }
 
@@ -632,20 +898,24 @@ class _BookingPageState extends State<BookingPage> {
   }
 
   Widget _buildConfirmButton() {
+    bool isRoomAvailable = _selectedRoom != null && selectedDateTime != null && _isRoomAvailableAtSelectedTime();
+    bool canConfirm = selectedDateTime != null && _selectedRoom != null && isRoomAvailable;
+    
     return Focus(
       focusNode: _confirmButtonFocusNode,
       child: Semantics(
         button: true,
         label: 'Confirm booking button',
         hint: 'Tap to review and confirm your booking details',
-        enabled: !_isLoading,
+        enabled: canConfirm && !_isLoading,
         child: ElevatedButton.icon(
           icon: const Icon(Icons.check_circle, color: secondaryColor),
           style: ElevatedButton.styleFrom(
             backgroundColor: primaryColor,
             minimumSize: const Size(double.infinity, 50),
+            disabledBackgroundColor: Colors.grey,
           ),
-          onPressed: _isLoading ? null : _showConfirmationDialog,
+          onPressed: (!canConfirm || _isLoading) ? null : _showConfirmationDialog,
           label: _isLoading
               ? SizedBox(
                   width: 20,
@@ -656,9 +926,11 @@ class _BookingPageState extends State<BookingPage> {
                     semanticsLabel: 'Loading indicator',
                   ),
                 )
-              : const Text(
-                  'Confirm Booking',
-                  style: TextStyle(color: secondaryColor, fontSize: 16),
+              : Text(
+                  !isRoomAvailable && _selectedRoom != null && selectedDateTime != null
+                      ? 'Room Not Available'
+                      : 'Confirm Booking',
+                  style: const TextStyle(color: secondaryColor, fontSize: 16),
                 ),
         ),
       ),

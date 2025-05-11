@@ -1,7 +1,8 @@
-// lib/admin/dashboard_screen.dart
+// Fixed import section of dashboard_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/booking_model.dart';
+import 'package:flutter_ucs_app/admin/models/room_model.dart'; // Fixed import path
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -20,17 +21,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _todayBookings = 0;
   bool _isLoading = true;
   final BookingService _bookingService = BookingService();
+  final RoomService _roomService = RoomService(); // Fixed RoomService instantiation
   final logger = Logger('DashboardScreen');
 
-  // Data for charts
+  // Data for charts - used in the chart building methods
   List<FlSpot> _weeklyBookingSpots = [];
   List<PieChartSectionData> _roomTypeSections = [];
   Map<String, int> _bookingsByLocation = {};
+  
+  // Room statistics
+  Map<String, Map<String, int>> _roomCounts = {};
+  Map<String, int> _capacityCounts = {};
 
   @override
   void initState() {
     super.initState();
     _loadDashboardData();
+    _loadRoomStatistics(); // Add this line
   }
 
   Future<void> _loadDashboardData() async {
@@ -84,6 +91,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _isLoading = false;
         });
       }
+    }
+  }
+  
+  // Load room statistics
+  Future<void> _loadRoomStatistics() async {
+    try {
+      // Get room counts by campus and type
+      final roomCounts = await _roomService.getRoomCountsByCampus();
+      
+      // Get total capacity by campus
+      final capacityCounts = await _roomService.getTotalCapacityByCampus();
+      
+      if (mounted) {
+        setState(() {
+          _roomCounts = roomCounts;
+          _capacityCounts = capacityCounts;
+        });
+      }
+    } catch (e) {
+      logger.warning('Error loading room statistics: $e');
     }
   }
 
@@ -216,6 +243,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _buildStatsRow(context),
 
             const SizedBox(height: 32),
+            
+            // Room capacity section
+            _buildRoomCapacitySection(context),
+            
+            const SizedBox(height: 32),
 
             // Charts section
             _buildChartsSection(context),
@@ -266,6 +298,234 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ],
     );
+  }
+  
+  // Build the room capacity section
+  Widget _buildRoomCapacitySection(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Room Capacity Overview',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            _buildCampusCapacityCard('Taunton'),
+            const SizedBox(width: 16),
+            _buildCampusCapacityCard('Bridgwater'),
+            const SizedBox(width: 16),
+            _buildCampusCapacityCard('Cannington'),
+          ],
+        ),
+        const SizedBox(height: 16),
+        _buildRoomTypeBreakdownTable(),
+      ],
+    );
+  }
+  
+  // Build a capacity card for a campus
+  Widget _buildCampusCapacityCard(String campus) {
+    final totalRooms = _roomCounts[campus]?['total'] ?? 0;
+    final totalCapacity = _capacityCounts[campus] ?? 0;
+    
+    return Expanded(
+      child: Card(
+        elevation: 4,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                campus,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: primaryColor,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  _buildCapacityInfoItem(
+                    'Total Rooms',
+                    totalRooms.toString(),
+                    Icons.meeting_room,
+                  ),
+                  const SizedBox(width: 16),
+                  _buildCapacityInfoItem(
+                    'Capacity',
+                    totalCapacity.toString(),
+                    Icons.people,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
+  // Build a capacity info item
+  Widget _buildCapacityInfoItem(String label, String value, IconData icon) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.grey,
+              fontSize: 12,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Icon(icon, size: 16, color: primaryColor),
+              const SizedBox(width: 4),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // Build room type breakdown table
+  Widget _buildRoomTypeBreakdownTable() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Room Type Breakdown',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                columns: [
+                  DataColumn(label: Text('Campus')),
+                  DataColumn(
+                    label: Row(
+                      children: [
+                        Icon(RoomType.quietRoom.icon, size: 16),
+                        SizedBox(width: 4),
+                        Text('Quiet Rooms'),
+                      ],
+                    ),
+                  ),
+                  DataColumn(
+                    label: Row(
+                      children: [
+                        Icon(RoomType.conferenceRoom.icon, size: 16),
+                        SizedBox(width: 4),
+                        Text('Conference Rooms'),
+                      ],
+                    ),
+                  ),
+                  DataColumn(
+                    label: Row(
+                      children: [
+                        Icon(RoomType.studyRoom.icon, size: 16),
+                        SizedBox(width: 4),
+                        Text('Study Rooms'),
+                      ],
+                    ),
+                  ),
+                  DataColumn(label: Text('Total')),
+                ],
+                rows: [
+                  _buildCampusTypeRow('Taunton'),
+                  _buildCampusTypeRow('Bridgwater'),
+                  _buildCampusTypeRow('Cannington'),
+                  // Total row
+                  DataRow(
+                    cells: [
+                      DataCell(Text(
+                        'All Campuses', 
+                        style: TextStyle(fontWeight: FontWeight.bold)
+                      )),
+                      DataCell(Text(
+                        _getTotalByRoomType('quiet').toString(),
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      )),
+                      DataCell(Text(
+                        _getTotalByRoomType('conference').toString(),
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      )),
+                      DataCell(Text(
+                        _getTotalByRoomType('study').toString(),
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      )),
+                      DataCell(Text(
+                        _getTotalRooms().toString(),
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      )),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  // Build a row for the campus type breakdown table
+  DataRow _buildCampusTypeRow(String campus) {
+    final quietRooms = _roomCounts[campus]?['quiet'] ?? 0;
+    final conferenceRooms = _roomCounts[campus]?['conference'] ?? 0;
+    final studyRooms = _roomCounts[campus]?['study'] ?? 0;
+    final totalRooms = _roomCounts[campus]?['total'] ?? 0;
+    
+    return DataRow(
+      cells: [
+        DataCell(Text(campus)),
+        DataCell(Text(quietRooms.toString())),
+        DataCell(Text(conferenceRooms.toString())),
+        DataCell(Text(studyRooms.toString())),
+        DataCell(Text(totalRooms.toString())),
+      ],
+    );
+  }
+  
+  // Get total rooms by type across all campuses
+  int _getTotalByRoomType(String type) {
+    int total = 0;
+    _roomCounts.forEach((campus, counts) {
+      total += counts[type] ?? 0;
+    });
+    return total;
+  }
+  
+  // Get total rooms across all campuses
+  int _getTotalRooms() {
+    int total = 0;
+    _roomCounts.forEach((campus, counts) {
+      total += counts['total'] ?? 0;
+    });
+    return total;
   }
 
   // Build a single stat card
