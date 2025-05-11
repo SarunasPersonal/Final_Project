@@ -24,8 +24,10 @@ class FirebaseAuthService extends ChangeNotifier {
       if (user != null) {
         bool isAdmin = await checkIfUserIsAdmin(user.uid);
         CurrentUser.login(user.email ?? '', user.uid, admin: isAdmin);
+        _logger.info('User logged in: ${user.email}, isAdmin: $isAdmin');
       } else {
         CurrentUser.logout();
+        _logger.info('User logged out');
       }
       
       notifyListeners();
@@ -65,9 +67,17 @@ class FirebaseAuthService extends ChangeNotifier {
         email: email,
         password: password,
       );
+      
+      // Update last login timestamp in Firestore
+      if (result.user != null) {
+        await _firestore.collection('users').doc(result.user!.uid).update({
+          'lastLogin': FieldValue.serverTimestamp(),
+        });
+      }
+      
       return result.user;
     } catch (e) {
-      _logger.warning('Login error', e);
+      _logger.warning('Login error: $e');
       rethrow;
     }
   }
@@ -83,7 +93,7 @@ class FirebaseAuthService extends ChangeNotifier {
       
       return docSnapshot.exists;
     } catch (e) {
-      _logger.warning('Admin check error', e);
+      _logger.warning('Admin check error: $e');
       return false;
     }
   }
@@ -134,8 +144,9 @@ class FirebaseAuthService extends ChangeNotifier {
   Future<void> resetPassword(String email) async {
     try {
       await _auth.sendPasswordResetEmail(email: email);
+      _logger.info('Password reset email sent to $email');
     } catch (e) {
-      _logger.warning('Reset password error', e);
+      _logger.warning('Reset password error: $e');
       rethrow;
     }
   }
@@ -144,8 +155,9 @@ class FirebaseAuthService extends ChangeNotifier {
   Future<void> logout() async {
     try {
       await _auth.signOut();
+      _logger.info('User logged out');
     } catch (e) {
-      _logger.warning('Logout error', e);
+      _logger.warning('Logout error: $e');
       rethrow;
     }
   }

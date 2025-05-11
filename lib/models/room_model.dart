@@ -1,4 +1,7 @@
+// lib/models/room_model.dart
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:logging/logging.dart';
 
 enum RoomType {
   quietRoom,
@@ -120,125 +123,369 @@ class Room {
       campus: json['campus'] as String,
       location: json['location'] as String?,
       notes: json['notes'] as String?,
-      features: (json['features'] as List<dynamic>)
-          .map((f) => RoomFeature.values.firstWhere(
-                (e) => e.name == f,
-                orElse: () => RoomFeature.wifi,
-              ))
-          .toList(),
+      features: (json['features'] as List<dynamic>?)
+              ?.map((f) => RoomFeature.values.firstWhere(
+                    (e) => e.name == f,
+                    orElse: () => RoomFeature.wifi,
+                  ))
+              .toList() ??
+          [],
       isAvailable: json['isAvailable'] as bool? ?? true,
     );
   }
 }
 
 class RoomService {
-  Future<List<Room>> getRoomsByCampus(String campus) async {
-    // TODO: Implement actual API call to get rooms
-    // This is a mock implementation
-    return [
-      Room(
-        id: '1',
-        name: 'Quiet Room 1',
-        type: RoomType.quietRoom,
-        capacity: 1,
-        campus: 'Taunton',
-        location: 'First Floor',
-        notes: 'Quiet study space',
-        features: [RoomFeature.wifi],
-      ),
-      Room(
-        id: '2',
-        name: 'Conference Room A',
-        type: RoomType.conferenceRoom,
-        capacity: 10,
-        campus: 'Bridgwater',
-        location: 'Second Floor',
-        notes: 'For meetings',
-        features: [
-          RoomFeature.projector,
-          RoomFeature.whiteboard,
-          RoomFeature.wifi
-        ],
-      ),
-      Room(
-        id: '3',
-        name: 'Study Room 1',
-        type: RoomType.studyRoom,
-        capacity: 4,
-        campus: 'Cannington',
-        location: 'Ground Floor',
-        notes: 'Group study',
-        features: [RoomFeature.computer, RoomFeature.printer, RoomFeature.wifi],
-      ),
-    ];
-  }
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final String _collection = 'rooms';
+  final Logger _logger = Logger('RoomService');
 
-  Future<Map<String, Map<String, int>>> getRoomCountsByCampus() async {
-    // Mock implementation: returns a map of campus -> {type: count, total: count}
-    return {
-      'Taunton': {'quiet': 2, 'conference': 1, 'study': 1, 'total': 4},
-      'Bridgwater': {'quiet': 1, 'conference': 2, 'study': 1, 'total': 4},
-      'Cannington': {'quiet': 1, 'conference': 1, 'study': 2, 'total': 4},
-    };
-  }
+  // Singleton pattern
+  static final RoomService _instance = RoomService._internal();
+  factory RoomService() => _instance;
+  RoomService._internal();
 
-  Future<Map<String, int>> getTotalCapacityByCampus() async {
-    // Mock implementation: returns a map of campus -> total capacity
-    return {
-      'Taunton': 40,
-      'Bridgwater': 30,
-      'Cannington': 25,
-    };
-  }
-
-  // Add missing methods
-  Future<void> initializeDefaultRooms() async {
-    // TODO: Implement actual initialization
-    print('Initializing default rooms');
-  }
-
+  // Get all rooms from Firestore
   Future<List<Room>> getAllRooms() async {
-    // TODO: Implement actual API call
+    try {
+      final QuerySnapshot snapshot = await _firestore.collection(_collection).get();
+      
+      return snapshot.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        data['id'] = doc.id; // Ensure ID is included
+        return Room.fromJson(data);
+      }).toList();
+    } catch (e) {
+      _logger.warning('Error getting rooms: $e');
+      // Return mock data in case of errors
+      return _createDefaultRooms();
+    }
+  }
+
+  // Get rooms for a specific campus
+  Future<List<Room>> getRoomsByCampus(String campus) async {
+    try {
+      final QuerySnapshot snapshot = await _firestore
+          .collection(_collection)
+          .where('campus', isEqualTo: campus)
+          .get();
+          
+      return snapshot.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        data['id'] = doc.id; // Ensure ID is included
+        return Room.fromJson(data);
+      }).toList();
+    } catch (e) {
+      _logger.warning('Error getting rooms for campus $campus: $e');
+      
+      // Return filtered mock data for this campus
+      return _createDefaultRooms()
+          .where((room) => room.campus == campus)
+          .toList();
+    }
+  }
+
+  // Get rooms of a specific type
+  Future<List<Room>> getRoomsByType(RoomType type) async {
+    String typeStr;
+    switch (type) {
+      case RoomType.quietRoom:
+        typeStr = 'quietRoom';
+        break;
+      case RoomType.conferenceRoom:
+        typeStr = 'conferenceRoom';
+        break;
+      case RoomType.studyRoom:
+        typeStr = 'studyRoom';
+        break;
+    }
+
+    try {
+      final QuerySnapshot snapshot = await _firestore
+          .collection(_collection)
+          .where('type', isEqualTo: typeStr)
+          .get();
+          
+      return snapshot.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        data['id'] = doc.id; // Ensure ID is included
+        return Room.fromJson(data);
+      }).toList();
+    } catch (e) {
+      _logger.warning('Error getting rooms by type $type: $e');
+      
+      // Return filtered mock data for this type
+      return _createDefaultRooms()
+          .where((room) => room.type == type)
+          .toList();
+    }
+  }
+
+  // Get a room by ID
+  Future<Room?> getRoomById(String id) async {
+    try {
+      final DocumentSnapshot doc = await _firestore.collection(_collection).doc(id).get();
+      
+      if (doc.exists) {
+        final data = doc.data() as Map<String, dynamic>;
+        data['id'] = doc.id; // Ensure ID is included
+        return Room.fromJson(data);
+      }
+      return null;
+    } catch (e) {
+      _logger.warning('Error getting room by ID $id: $e');
+      return null;
+    }
+  }
+
+  // Initialize the system with default rooms
+  Future<void> initializeDefaultRooms() async {
+    try {
+      // Check if rooms already exist
+      final QuerySnapshot snapshot = await _firestore.collection(_collection).limit(1).get();
+      
+      if (snapshot.docs.isNotEmpty) {
+        _logger.info('Rooms already exist, skipping initialization');
+        return; // Rooms already exist, no need to initialize
+      }
+      
+      _logger.info('Initializing default rooms');
+      
+      // Create default rooms if none exist
+      final List<Room> defaultRooms = _createDefaultRooms();
+      
+      // Use a batch to add all default rooms
+      final WriteBatch batch = _firestore.batch();
+      
+      for (var room in defaultRooms) {
+        final DocRef = _firestore.collection(_collection).doc(room.id);
+        batch.set(DocRef, room.toJson());
+      }
+      
+      await batch.commit();
+      _logger.info('Default rooms initialized successfully (${defaultRooms.length} rooms added)');
+    } catch (e) {
+      _logger.warning('Error initializing default rooms: $e');
+    }
+  }
+
+  // Add a new room
+  Future<bool> addRoom(Room room) async {
+    try {
+      await _firestore.collection(_collection).doc(room.id).set(room.toJson());
+      _logger.info('Added room: ${room.name}');
+      return true;
+    } catch (e) {
+      _logger.warning('Error adding room ${room.name}: $e');
+      return false;
+    }
+  }
+
+  // Delete a room by ID
+  Future<bool> deleteRoom(String id) async {
+    try {
+      await _firestore.collection(_collection).doc(id).delete();
+      _logger.info('Deleted room: $id');
+      return true;
+    } catch (e) {
+      _logger.warning('Error deleting room $id: $e');
+      return false;
+    }
+  }
+
+  // Update an existing room
+  Future<bool> updateRoom(Room room) async {
+    try {
+      await _firestore.collection(_collection).doc(room.id).update(room.toJson());
+      _logger.info('Updated room: ${room.name}');
+      return true;
+    } catch (e) {
+      _logger.warning('Error updating room ${room.name}: $e');
+      return false;
+    }
+  }
+
+  // Create a list of default rooms
+  List<Room> _createDefaultRooms() {
     return [
+      // Taunton campus rooms
       Room(
-        id: '1',
-        name: 'Quiet Room 1',
+        id: 'taunton-quiet-1',
+        name: 'Quiet Study Room 1',
+        campus: 'Taunton',
         type: RoomType.quietRoom,
         capacity: 1,
-        campus: 'Taunton',
-        location: 'First Floor',
-        notes: 'Quiet study space',
-        features: [RoomFeature.wifi],
+        features: [RoomFeature.computer, RoomFeature.wifi],
+        location: 'Library, Ground Floor',
       ),
       Room(
-        id: '2',
+        id: 'taunton-conference-1',
         name: 'Conference Room A',
+        campus: 'Taunton',
         type: RoomType.conferenceRoom,
-        capacity: 10,
-        campus: 'Bridgwater',
-        location: 'Second Floor',
-        notes: 'For meetings',
+        capacity: 20,
         features: [
           RoomFeature.projector,
           RoomFeature.whiteboard,
-          RoomFeature.wifi
+          RoomFeature.computer,
+          RoomFeature.wifi,
         ],
+        location: 'Main Building, Room M102',
+      ),
+      Room(
+        id: 'taunton-study-1',
+        name: 'Study Room 1',
+        campus: 'Taunton',
+        type: RoomType.studyRoom,
+        capacity: 6,
+        features: [
+          RoomFeature.whiteboard,
+          RoomFeature.wifi,
+        ],
+        location: 'Library, Second Floor',
+      ),
+      
+      // Bridgwater campus rooms
+      Room(
+        id: 'bridgwater-quiet-1',
+        name: 'Quiet Study Pod 1',
+        campus: 'Bridgwater',
+        type: RoomType.quietRoom,
+        capacity: 1,
+        features: [RoomFeature.wifi],
+        location: 'Learning Resource Center',
+      ),
+      Room(
+        id: 'bridgwater-conference-1',
+        name: 'Main Conference Room',
+        campus: 'Bridgwater',
+        type: RoomType.conferenceRoom,
+        capacity: 30,
+        features: [
+          RoomFeature.projector,
+          RoomFeature.whiteboard,
+          RoomFeature.computer,
+          RoomFeature.wifi,
+        ],
+        location: 'Bath Building, Ground Floor',
+      ),
+      Room(
+        id: 'bridgwater-study-1',
+        name: 'Group Study Room 1',
+        campus: 'Bridgwater',
+        type: RoomType.studyRoom,
+        capacity: 8,
+        features: [
+          RoomFeature.whiteboard,
+          RoomFeature.wifi,
+        ],
+        location: 'Learning Resource Center',
+      ),
+      
+      // Cannington campus rooms
+      Room(
+        id: 'cannington-quiet-1',
+        name: 'Quiet Study Room 1',
+        campus: 'Cannington',
+        type: RoomType.quietRoom,
+        capacity: 1,
+        features: [RoomFeature.wifi],
+        location: 'Library Building',
+      ),
+      Room(
+        id: 'cannington-conference-1',
+        name: 'Rodway Conference Room',
+        campus: 'Cannington',
+        type: RoomType.conferenceRoom,
+        capacity: 20,
+        features: [
+          RoomFeature.projector,
+          RoomFeature.whiteboard,
+          RoomFeature.computer,
+          RoomFeature.wifi,
+        ],
+        location: 'Rodway Building, Room R101',
+      ),
+      Room(
+        id: 'cannington-study-1',
+        name: 'Study Group Room 1',
+        campus: 'Cannington',
+        type: RoomType.studyRoom,
+        capacity: 6,
+        features: [
+          RoomFeature.whiteboard,
+          RoomFeature.wifi,
+        ],
+        location: 'Library Building',
       ),
     ];
   }
-
-  Future<void> deleteRoom(String roomId) async {
-    // TODO: Implement actual deletion
-    print('Deleting room: $roomId');
+  
+  // Get room counts by campus
+  Future<Map<String, Map<String, int>>> getRoomCountsByCampus() async {
+    try {
+      final Map<String, Map<String, int>> result = {
+        'Taunton': {'quiet': 0, 'conference': 0, 'study': 0, 'total': 0},
+        'Bridgwater': {'quiet': 0, 'conference': 0, 'study': 0, 'total': 0},
+        'Cannington': {'quiet': 0, 'conference': 0, 'study': 0, 'total': 0},
+      };
+      
+      final List<Room> rooms = await getAllRooms();
+      
+      for (final Room room in rooms) {
+        final String campus = room.campus;
+        final String type = room.type == RoomType.quietRoom 
+            ? 'quiet' 
+            : room.type == RoomType.conferenceRoom 
+                ? 'conference' 
+                : 'study';
+        
+        if (result.containsKey(campus)) {
+          result[campus]![type] = (result[campus]![type] ?? 0) + 1;
+          result[campus]!['total'] = (result[campus]!['total'] ?? 0) + 1;
+        }
+      }
+      
+      return result;
+    } catch (e) {
+      _logger.warning('Error calculating room counts: $e');
+      // Return mock data
+      return {
+        'Taunton': {'quiet': 2, 'conference': 1, 'study': 1, 'total': 4},
+        'Bridgwater': {'quiet': 1, 'conference': 2, 'study': 1, 'total': 4},
+        'Cannington': {'quiet': 1, 'conference': 1, 'study': 2, 'total': 4},
+      };
+    }
   }
 
-  Future<void> addRoom(Room room) async {
-    // TODO: Implement actual addition
-    print('Adding room: ${room.name}');
-  }
-
-  Future<void> updateRoom(Room room) async {
-    // TODO: Implement actual update
-    print('Updating room: ${room.name}');
+  // Get total capacity by campus
+  Future<Map<String, int>> getTotalCapacityByCampus() async {
+    try {
+      final Map<String, int> result = {
+        'Taunton': 0,
+        'Bridgwater': 0,
+        'Cannington': 0,
+      };
+      
+      final List<Room> rooms = await getAllRooms();
+      
+      for (final Room room in rooms) {
+        final String campus = room.campus;
+        
+        if (result.containsKey(campus)) {
+          result[campus] = (result[campus] ?? 0) + room.capacity;
+        }
+      }
+      
+      return result;
+    } catch (e) {
+      _logger.warning('Error calculating total capacity: $e');
+      // Return mock data
+      return {
+        'Taunton': 40,
+        'Bridgwater': 30,
+        'Cannington': 25,
+      };
+    }
   }
 }

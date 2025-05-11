@@ -2,9 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/models/room_model.dart';
-import 'package:flutter_ucs_app/booking_model.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:logging/logging.dart';
 
 enum BookingStatus {
@@ -82,35 +81,97 @@ class Booking {
 }
 
 class BookingService {
-  List<Booking> getAllBookings() {
-    // TODO: Implement actual API call to get bookings
-    // This is a mock implementation
-    return [
-      Booking(
-        id: '1',
-        userId: 'user123',
-        location: 'Taunton',
-        roomType: RoomType.quietRoom,
-        dateTime: DateTime.now().add(const Duration(days: 1)),
-        duration: 60,
-        notes: 'Quiet study session',
-      ),
-      Booking(
-        id: '2',
-        userId: 'user456',
-        location: 'Bridgwater',
-        roomType: RoomType.conferenceRoom,
-        dateTime: DateTime.now().add(const Duration(days: 2)),
-        duration: 120,
-        notes: 'Team meeting',
-      ),
-    ];
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final Logger _logger = Logger('BookingService');
+
+  // Get all bookings from Firestore
+  Future<List<Booking>> getAllBookings() async {
+    try {
+      // Get bookings from Firestore, ordered by date/time descending
+      final QuerySnapshot snapshot = await _firestore
+          .collection('bookings')
+          .orderBy('dateTime', descending: true)
+          .get();
+      
+      // Convert documents to Booking objects
+      return snapshot.docs.map((doc) {
+        final data = doc.data() as Map<String, dynamic>;
+        // Ensure the document ID is included
+        data['id'] = doc.id;
+        return Booking.fromJson(data);
+      }).toList();
+    } catch (e) {
+      _logger.warning('Error fetching bookings: $e');
+      // If there's an error, return mock data for development purposes
+      return [
+        Booking(
+          id: '1',
+          userId: 'user123',
+          location: 'Taunton',
+          roomType: RoomType.quietRoom,
+          dateTime: DateTime.now().add(const Duration(days: 1)),
+          duration: 60,
+          notes: 'Quiet study session',
+        ),
+        Booking(
+          id: '2',
+          userId: 'user456',
+          location: 'Bridgwater',
+          roomType: RoomType.conferenceRoom,
+          dateTime: DateTime.now().add(const Duration(days: 2)),
+          duration: 120,
+          notes: 'Team meeting',
+        ),
+      ];
+    }
   }
 
-  void deleteBooking(String location, DateTime dateTime, RoomType roomType) {
-    // TODO: Implement actual API call to delete booking
-    // This is a mock implementation
-    print('Deleting booking: $location, $dateTime, $roomType');
+  // Delete a booking by its criteria
+  Future<void> deleteBooking(String location, DateTime dateTime, RoomType roomType) async {
+    try {
+      // Convert RoomType to string for comparison
+      String roomTypeStr;
+      switch (roomType) {
+        case RoomType.quietRoom:
+          roomTypeStr = 'quietRoom';
+          break;
+        case RoomType.conferenceRoom:
+          roomTypeStr = 'conferenceRoom';
+          break;
+        case RoomType.studyRoom:
+          roomTypeStr = 'studyRoom';
+          break;
+      }
+      
+      // Find bookings matching the criteria
+      final QuerySnapshot snapshot = await _firestore
+          .collection('bookings')
+          .where('location', isEqualTo: location)
+          .where('roomType', isEqualTo: roomTypeStr)
+          .get();
+      
+      // Filter by date (Firestore can't directly compare DateTime)
+      final targetDate = DateFormat('yyyy-MM-dd').format(dateTime);
+      
+      // Find the document that matches the date
+      for (var doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final docDate = DateFormat('yyyy-MM-dd').format(
+          DateTime.parse(data['dateTime'] as String)
+        );
+        
+        if (docDate == targetDate) {
+          // Delete the booking
+          await _firestore.collection('bookings').doc(doc.id).delete();
+          _logger.info('Deleted booking: $location, $dateTime, $roomType');
+          break;
+        }
+      }
+    } catch (e) {
+      _logger.warning('Error deleting booking: $e');
+      // Rethrow to handle in UI
+      rethrow;
+    }
   }
 }
 
@@ -124,10 +185,13 @@ class BookingsManagementScreen extends StatefulWidget {
 
 class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
   final BookingService _bookingService = BookingService();
+  final Logger _logger = Logger('BookingsManagementScreen');
   List<Booking> _filteredBookings = [];
+  List<Booking> _allBookings = [];
   String _searchQuery = '';
   String _filterLocation = 'All Locations';
   RoomType? _filterRoomType;
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -135,18 +199,39 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
     _loadBookings();
   }
 
-  void _loadBookings() {
-    final allBookings = _bookingService.getAllBookings();
+  Future<void> _loadBookings() async {
     setState(() {
-      _filteredBookings = allBookings;
+      _isLoading = true;
     });
+    
+    try {
+      final allBookings = await _bookingService.getAllBookings();
+      
+      if (mounted) {
+        setState(() {
+          _allBookings = allBookings;
+          _applyFilters();
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      _logger.warning('Error loading bookings: $e');
+      
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading bookings: $e')),
+        );
+      }
+    }
   }
 
   void _applyFilters() {
-    final allBookings = _bookingService.getAllBookings();
-
     setState(() {
-      _filteredBookings = allBookings.where((booking) {
+      _filteredBookings = _allBookings.where((booking) {
         // Apply location filter
         if (_filterLocation != 'All Locations' &&
             booking.location != _filterLocation) {
@@ -171,7 +256,7 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
     });
   }
 
-  void _deleteBooking(Booking booking) {
+  Future<void> _deleteBooking(Booking booking) async {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -183,17 +268,40 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
-              _bookingService.deleteBooking(
-                booking.location,
-                booking.dateTime,
-                booking.roomType,
-              );
+            onPressed: () async {
               Navigator.pop(context);
-              _loadBookings();
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Booking deleted successfully')),
-              );
+              
+              setState(() {
+                _isLoading = true;
+              });
+              
+              try {
+                await _bookingService.deleteBooking(
+                  booking.location,
+                  booking.dateTime,
+                  booking.roomType,
+                );
+                
+                if (mounted) {
+                  _loadBookings();  // Reload bookings after deletion
+                  
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Booking deleted successfully')),
+                  );
+                }
+              } catch (e) {
+                _logger.warning('Error deleting booking: $e');
+                
+                if (mounted) {
+                  setState(() {
+                    _isLoading = false;
+                  });
+                  
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Error deleting booking: $e')),
+                  );
+                }
+              }
             },
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
@@ -287,7 +395,9 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
 
           // Bookings table
           Expanded(
-            child: _filteredBookings.isEmpty
+            child: _isLoading 
+              ? const Center(child: CircularProgressIndicator(color: primaryColor))
+              : _filteredBookings.isEmpty
                 ? const Center(child: Text('No bookings found'))
                 : SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
@@ -306,7 +416,7 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
                             booking.dateTime.isAfter(DateTime.now());
                         return DataRow(
                           cells: [
-                            DataCell(Text(booking.userId.substring(0, 8))),
+                            DataCell(Text(booking.id.substring(0, 8))),
                             DataCell(Text(booking.location)),
                             DataCell(
                               Row(
@@ -348,14 +458,14 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
                                     icon: const Icon(Icons.visibility,
                                         color: primaryColor),
                                     onPressed: () {
-                                      // View booking details
+                                      _showBookingDetails(booking);
                                     },
                                   ),
                                   IconButton(
                                     icon: const Icon(Icons.edit,
                                         color: Colors.amber),
                                     onPressed: () {
-                                      // Edit booking
+                                      _showEditBookingDialog(booking);
                                     },
                                   ),
                                   IconButton(
@@ -371,6 +481,96 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
                       }).toList(),
                     ),
                   ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  void _showBookingDetails(Booking booking) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Booking Details'),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildDetailRow('Booking ID', booking.id),
+              _buildDetailRow('Location', booking.location),
+              _buildDetailRow('Room Type', booking.roomType.displayName),
+              _buildDetailRow('Date & Time', DateFormat('MMMM d, y HH:mm').format(booking.dateTime)),
+              _buildDetailRow('Duration', '${booking.duration} minutes'),
+              _buildDetailRow('Status', booking.status.displayName),
+              _buildDetailRow('User ID', booking.userId),
+              if (booking.notes != null && booking.notes!.isNotEmpty)
+                _buildDetailRow('Notes', booking.notes!),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              '$label:',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(value),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  void _showEditBookingDialog(Booking booking) {
+    // In a real implementation, you would have form fields here
+    // for updating the booking details
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Edit Booking'),
+        content: const Text(
+          'Editing functionality would be implemented here with form fields '
+          'to update booking status, date/time, etc.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              // In a real implementation, you would update the booking here
+              Navigator.pop(context);
+              
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Booking editing would be implemented in a real app'),
+                ),
+              );
+            },
+            child: const Text('Save Changes'),
           ),
         ],
       ),

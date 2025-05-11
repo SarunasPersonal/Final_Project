@@ -1,9 +1,9 @@
 // lib/admin/rooms_management_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
-import 'package:flutter_ucs_app/booking_model.dart';
 import 'package:flutter_ucs_app/models/room_model.dart';
 import 'package:data_table_2/data_table_2.dart';
+import 'package:logging/logging.dart';
 
 class RoomsManagementScreen extends StatefulWidget {
   const RoomsManagementScreen({super.key});
@@ -14,6 +14,7 @@ class RoomsManagementScreen extends StatefulWidget {
 
 class _RoomsManagementScreenState extends State<RoomsManagementScreen> with SingleTickerProviderStateMixin {
   final RoomService _roomService = RoomService();
+  final Logger _logger = Logger('RoomsManagementScreen');
   List<Room> _rooms = [];
   List<Room> _filteredRooms = [];
   bool _isLoading = true;
@@ -73,7 +74,7 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
         _isLoading = false;
       });
     } catch (e) {
-      print('Error loading rooms: $e');
+      _logger.warning('Error loading rooms: $e');
       setState(() {
         _isLoading = false;
       });
@@ -96,7 +97,7 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
         _capacityCounts = capacityCounts;
       });
     } catch (e) {
-      print('Error loading statistics: $e');
+      _logger.warning('Error loading statistics: $e');
     }
   }
   
@@ -142,17 +143,21 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
       
       await _loadStatistics();
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Room deleted successfully')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Room deleted successfully')),
+        );
+      }
     } catch (e) {
       setState(() {
         _isLoading = false;
       });
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error deleting room: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error deleting room: $e')),
+        );
+      }
     }
   }
   
@@ -440,13 +445,17 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
       await _loadRooms();
       await _loadStatistics();
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Room added successfully')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Room added successfully')),
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error adding room: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error adding room: $e')),
+        );
+      }
     } finally {
       setState(() {
         _isLoading = false;
@@ -482,13 +491,17 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
       await _loadRooms();
       await _loadStatistics();
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Room updated successfully')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Room updated successfully')),
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error updating room: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error updating room: $e')),
+        );
+      }
     } finally {
       setState(() {
         _isLoading = false;
@@ -699,7 +712,7 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
             DataCell(Text(room.location ?? 'N/A')),
             DataCell(
               Container(
-                padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: room.isAvailable ? Colors.green.shade100 : Colors.red.shade100,
                   borderRadius: BorderRadius.circular(12),

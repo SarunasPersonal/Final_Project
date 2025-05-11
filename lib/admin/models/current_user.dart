@@ -1,4 +1,3 @@
-// lib/models/current_user.dart
 class CurrentUser {
   static String? userId;
   static String? email;
