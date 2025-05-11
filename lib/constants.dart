@@ -8,16 +8,19 @@ const Color whiteColor = Colors.white;
 class CurrentUser {
   static String? email;
   static String? userId;
+  static bool isAdmin = false; // Add this line
   
   static bool isLoggedIn() => email != null && userId != null;
   
-  static void login(String userEmail, String id) {
+  static void login(String userEmail, String id, {bool admin = false}) { // Update this
     email = userEmail;
     userId = id;
+    isAdmin = admin;
   }
   
   static void logout() {
     email = null;
     userId = null;
+    isAdmin = false; // Add this line
   }
 }

@@ -1,4 +1,4 @@
-// Modified home_page.dart with menu on the top right
+// lib/home_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/booking_page.dart';
@@ -7,6 +7,8 @@ import 'package:flutter_ucs_app/my_bookings_page.dart';
 import 'package:flutter_ucs_app/settings_screen.dart';
 import 'package:flutter_ucs_app/theme_provider.dart';
 import 'package:flutter_ucs_app/chat_bot_screen.dart';
+import 'package:flutter_ucs_app/admin/admin_panel.dart'; // Import the admin panel
+import 'package:flutter_ucs_app/services/firebase_auth_service.dart'; // Import the auth service
 import 'package:provider/provider.dart';
 
 class HomePage extends StatelessWidget {
@@ -16,6 +18,7 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     // Access the ThemeProvider to use and modify theme settings
     final themeProvider = Provider.of<ThemeProvider>(context);
+    final authService = Provider.of<FirebaseAuthService>(context, listen: false);
 
     return Scaffold(
       appBar: AppBar(
@@ -47,57 +50,75 @@ class HomePage extends StatelessWidget {
             icon: const Icon(Icons.menu, color: primaryColor),
             tooltip: 'Menu',
             onSelected: (String choice) {
-              _handleMenuSelection(context, choice);
+              _handleMenuSelection(context, choice, authService);
             },
             itemBuilder: (BuildContext context) {
-              return [
-                // Menu items
-                const PopupMenuItem<String>(
-                  value: 'profile',
-                  child: _MenuListItem(
-                    icon: Icons.person,
-                    text: 'My Profile',
-                  ),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'bookings',
-                  child: _MenuListItem(
-                    icon: Icons.calendar_today,
-                    text: 'My Bookings',
-                  ),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'settings',
-                  child: _MenuListItem(
-                    icon: Icons.settings_accessibility,
-                    text: 'Accessibility Settings',
-                  ),
-                ),
-                const PopupMenuItem<String>(
-                  value: 'chat',
-                  child: _MenuListItem(
-                    icon: Icons.chat_bubble_outline,
-                    text: 'Chat Assistant',
-                  ),
-                ),
-                const PopupMenuDivider(),
-                const PopupMenuItem<String>(
-                  value: 'help',
-                  child: _MenuListItem(
-                    icon: Icons.help_outline,
-                    text: 'Help & Support',
-                  ),
-                ),
-                const PopupMenuDivider(),
-                const PopupMenuItem<String>(
-                  value: 'logout',
-                  child: _MenuListItem(
-                    icon: Icons.logout,
-                    text: 'Logout',
-                  ),
-                ),
-              ];
-            },
+  final List<PopupMenuEntry<String>> menuItems = [
+    // Menu items
+    const PopupMenuItem<String>(
+      value: 'profile',
+      child: _MenuListItem(
+        icon: Icons.person,
+        text: 'My Profile',
+      ),
+    ),
+    const PopupMenuItem<String>(
+      value: 'bookings',
+      child: _MenuListItem(
+        icon: Icons.calendar_today,
+        text: 'My Bookings',
+      ),
+    ),
+    const PopupMenuItem<String>(
+      value: 'settings',
+      child: _MenuListItem(
+        icon: Icons.settings_accessibility,
+        text: 'Accessibility Settings',
+      ),
+    ),
+    const PopupMenuItem<String>(
+      value: 'chat',
+      child: _MenuListItem(
+        icon: Icons.chat_bubble_outline,
+        text: 'Chat Assistant',
+      ),
+    ),
+    const PopupMenuDivider(),
+    const PopupMenuItem<String>(
+      value: 'help',
+      child: _MenuListItem(
+        icon: Icons.help_outline,
+        text: 'Help & Support',
+      ),
+    ),
+  ];
+  
+  // Only show admin panel option if user is an admin
+  if (CurrentUser.isAdmin) {
+    menuItems.add(
+      const PopupMenuItem<String>(
+        value: 'admin',
+        child: _MenuListItem(
+          icon: Icons.admin_panel_settings,
+          text: 'Admin Panel',
+        ),
+      ),
+    );
+  }
+  
+  menuItems.add(const PopupMenuDivider());
+  menuItems.add(
+    const PopupMenuItem<String>(
+      value: 'logout',
+      child: _MenuListItem(
+        icon: Icons.logout,
+        text: 'Logout',
+      ),
+    ),
+  );
+  
+  return menuItems;
+},
           ),
         ],
       ),
@@ -108,6 +129,48 @@ class HomePage extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Admin badge for admin users
+                if (CurrentUser.isAdmin)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: primaryColor, width: 1),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.admin_panel_settings, color: primaryColor, size: 16),
+                        const SizedBox(width: 8),
+                        const Text(
+                          'Admin Access',
+                          style: TextStyle(
+                            color: primaryColor,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        InkWell(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const AdminPanel()),
+                            );
+                          },
+                          child: const Text(
+                            'Open Admin Panel',
+                            style: TextStyle(
+                              color: primaryColor,
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
                 // Welcome Text
                 Text(
                   'Welcome to UCS Booking',
@@ -153,12 +216,18 @@ class HomePage extends StatelessWidget {
   }
 
   // Handle menu selection
-  void _handleMenuSelection(BuildContext context, String choice) {
+  void _handleMenuSelection(BuildContext context, String choice, FirebaseAuthService authService) {
     switch (choice) {
       case 'profile':
         // Show a snackbar for the profile feature
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Profile feature coming soon')),
+        );
+        break;
+      case 'admin':
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const AdminPanel()),
         );
         break;
       case 'bookings':
@@ -189,8 +258,8 @@ class HomePage extends StatelessWidget {
         );
         break;
       case 'logout':
-        // Logout the current user and navigate to the login screen
-        CurrentUser.logout();
+        // Properly logout using the auth service
+        authService.logout();
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (context) => const LoginScreen()),

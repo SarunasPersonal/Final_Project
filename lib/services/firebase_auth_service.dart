@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:logging/logging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class FirebaseAuthService extends ChangeNotifier {
   // Create a logger instance for this class
@@ -10,23 +11,23 @@ class FirebaseAuthService extends ChangeNotifier {
   User? _user;
   
   // Constructor: Initialize and set up auth state listener
-  FirebaseAuthService() {
-    // Set up logging if it hasn't been done already
-    _setupLogging();
+FirebaseAuthService() {
+  _setupLogging();
+  
+  _auth.authStateChanges().listen((User? user) async {
+    _user = user;
     
-    _auth.authStateChanges().listen((User? user) {
-      _user = user;
-      
-      // Update CurrentUser global helper
-      if (user != null) {
-        CurrentUser.login(user.email ?? '', user.uid);
-      } else {
-        CurrentUser.logout();
-      }
-      
-      notifyListeners();
-    });
-  }
+    // Update CurrentUser global helper
+    if (user != null) {
+      bool isAdmin = await checkIfUserIsAdmin(user.uid);
+      CurrentUser.login(user.email ?? '', user.uid, admin: isAdmin);
+    } else {
+      CurrentUser.logout();
+    }
+    
+    notifyListeners();
+  });
+}
   
   // Set up logging configuration
   void _setupLogging() {
@@ -67,6 +68,20 @@ class FirebaseAuthService extends ChangeNotifier {
       rethrow;
     }
   }
+  Future<bool> checkIfUserIsAdmin(String uid) async {
+  try {
+    // Get admin status from Firestore (you'll need to create this collection)
+    final docSnapshot = await FirebaseFirestore.instance
+        .collection('admin_users')
+        .doc(uid)
+        .get();
+    
+    return docSnapshot.exists;
+  } catch (e) {
+    _logger.warning('Admin check error', e);
+    return false;
+  }
+}
   
   // Register with email and password
   Future<User?> registerWithEmailPassword(String email, String password) async {
