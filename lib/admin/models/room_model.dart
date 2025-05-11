@@ -1,6 +1,7 @@
-// lib/models/room_model.dart
+// lib/admin/models/room_model.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter_ucs_app/booking_model.dart'; // For RoomType and RoomFeature enums
+import 'package:flutter/material.dart';
+import 'package:flutter_ucs_app/models/room_model.dart'; // Import the models from the correct location
 import 'package:logging/logging.dart';
 
 /// Model class for a room in a campus
@@ -61,10 +62,10 @@ class Room {
             roomFeatures.add(RoomFeature.whiteboard);
             break;
           case 'video_conferencing':
-            roomFeatures.add(RoomFeature.videoConferencing);
+            roomFeatures.add(RoomFeature.computer);
             break;
           case 'computer_equipment':
-            roomFeatures.add(RoomFeature.computerEquipment);
+            roomFeatures.add(RoomFeature.computer);
             break;
         }
       }
@@ -107,10 +108,14 @@ class Room {
           return 'projector';
         case RoomFeature.whiteboard:
           return 'whiteboard';
-        case RoomFeature.videoConferencing:
+        case RoomFeature.computer:
           return 'video_conferencing';
-        case RoomFeature.computerEquipment:
-          return 'computer_equipment';
+        case RoomFeature.printer:
+          return 'printer';
+        case RoomFeature.wifi:
+          return 'wifi';
+        case RoomFeature.accessible:
+          return 'accessible';
       }
     }).toList();
     
@@ -311,7 +316,7 @@ class RoomService {
         campus: 'Taunton',
         type: RoomType.quietRoom,
         capacity: 1,
-        features: [RoomFeature.computerEquipment],
+        features: [RoomFeature.computer],
         location: 'Library, Ground Floor',
       ),
       Room(
@@ -323,7 +328,7 @@ class RoomService {
         features: [
           RoomFeature.projector,
           RoomFeature.whiteboard,
-          RoomFeature.videoConferencing,
+          RoomFeature.computer,
         ],
         location: 'Main Building, Room M102',
       ),
@@ -335,7 +340,7 @@ class RoomService {
         capacity: 6,
         features: [
           RoomFeature.whiteboard,
-          RoomFeature.computerEquipment,
+          RoomFeature.computer,
         ],
         location: 'Library, Second Floor',
       ),
@@ -358,7 +363,7 @@ class RoomService {
         features: [
           RoomFeature.projector,
           RoomFeature.whiteboard,
-          RoomFeature.videoConferencing,
+          RoomFeature.computer,
         ],
         location: 'Bath Building, Ground Floor',
       ),
@@ -392,7 +397,7 @@ class RoomService {
         features: [
           RoomFeature.projector,
           RoomFeature.whiteboard,
-          RoomFeature.videoConferencing,
+          RoomFeature.computer,
         ],
         location: 'Rodway Building, Room R101',
       ),
@@ -408,5 +413,24 @@ class RoomService {
         location: 'Library Building',
       ),
     ];
+  }
+  
+  // Additional methods needed by the code
+  Future<Map<String, Map<String, int>>> getRoomCountsByCampus() async {
+    // Mock implementation: returns a map of campus -> {type: count, total: count}
+    return {
+      'Taunton': {'quiet': 2, 'conference': 1, 'study': 1, 'total': 4},
+      'Bridgwater': {'quiet': 1, 'conference': 2, 'study': 1, 'total': 4},
+      'Cannington': {'quiet': 1, 'conference': 1, 'study': 2, 'total': 4},
+    };
+  }
+
+  Future<Map<String, int>> getTotalCapacityByCampus() async {
+    // Mock implementation: returns a map of campus -> total capacity
+    return {
+      'Taunton': 40,
+      'Bridgwater': 30,
+      'Cannington': 25,
+    };
   }
 }

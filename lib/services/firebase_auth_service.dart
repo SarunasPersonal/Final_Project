@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:logging/logging.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter_ucs_app/models/current_user.dart';
 
 class FirebaseAuthService extends ChangeNotifier {
   // Create a logger instance for this class

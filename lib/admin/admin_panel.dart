@@ -8,6 +8,7 @@ import 'package:flutter_ucs_app/admin/rooms_management_screen.dart';
 import 'package:flutter_ucs_app/services/firebase_auth_service.dart';
 import 'package:flutter_ucs_app/login_screen.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter_ucs_app/models/current_user.dart'; 
 
 class AdminPanel extends StatefulWidget {
   const AdminPanel({super.key});

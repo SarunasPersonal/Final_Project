@@ -8,6 +8,7 @@ const Color backgroundColor = Color(0xFFF5F5F5);
 const Color errorColor = Color(0xFFE53935);
 const Color successColor = Color(0xFF43A047);
 const Color warningColor = Color(0xFFFFA000);
+const Color whiteColor = Colors.white;
 
 // Text Styles
 const TextStyle headingStyle = TextStyle(
