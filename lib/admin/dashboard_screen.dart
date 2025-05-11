@@ -1,8 +1,8 @@
 // Fixed import section of dashboard_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
+import 'package:flutter_ucs_app/models/room_model.dart';
 import 'package:flutter_ucs_app/booking_model.dart';
-import 'package:flutter_ucs_app/admin/models/room_model.dart'; // Fixed import path
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -21,14 +21,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
   int _todayBookings = 0;
   bool _isLoading = true;
   final BookingService _bookingService = BookingService();
-  final RoomService _roomService = RoomService(); // Fixed RoomService instantiation
+  final RoomService _roomService =
+      RoomService(); // Fixed RoomService instantiation
   final logger = Logger('DashboardScreen');
 
   // Data for charts - used in the chart building methods
   List<FlSpot> _weeklyBookingSpots = [];
   List<PieChartSectionData> _roomTypeSections = [];
   Map<String, int> _bookingsByLocation = {};
-  
+
   // Room statistics
   Map<String, Map<String, int>> _roomCounts = {};
   Map<String, int> _capacityCounts = {};
@@ -44,7 +45,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       // Get all bookings
       final allBookings = _bookingService.getAllBookings();
-      
+
       // Get today's bookings
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
@@ -93,16 +94,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     }
   }
-  
+
   // Load room statistics
   Future<void> _loadRoomStatistics() async {
     try {
       // Get room counts by campus and type
       final roomCounts = await _roomService.getRoomCountsByCampus();
-      
+
       // Get total capacity by campus
       final capacityCounts = await _roomService.getTotalCapacityByCampus();
-      
+
       if (mounted) {
         setState(() {
           _roomCounts = roomCounts;
@@ -243,10 +244,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _buildStatsRow(context),
 
             const SizedBox(height: 32),
-            
+
             // Room capacity section
             _buildRoomCapacitySection(context),
-            
+
             const SizedBox(height: 32),
 
             // Charts section
@@ -299,7 +300,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ],
     );
   }
-  
+
   // Build the room capacity section
   Widget _buildRoomCapacitySection(BuildContext context) {
     return Column(
@@ -326,12 +327,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ],
     );
   }
-  
+
   // Build a capacity card for a campus
   Widget _buildCampusCapacityCard(String campus) {
     final totalRooms = _roomCounts[campus]?['total'] ?? 0;
     final totalCapacity = _capacityCounts[campus] ?? 0;
-    
+
     return Expanded(
       child: Card(
         elevation: 4,
@@ -370,7 +371,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
-  
+
   // Build a capacity info item
   Widget _buildCapacityInfoItem(String label, String value, IconData icon) {
     return Expanded(
@@ -403,7 +404,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
-  
+
   // Build room type breakdown table
   Widget _buildRoomTypeBreakdownTable() {
     return Card(
@@ -461,10 +462,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   // Total row
                   DataRow(
                     cells: [
-                      DataCell(Text(
-                        'All Campuses', 
-                        style: TextStyle(fontWeight: FontWeight.bold)
-                      )),
+                      DataCell(Text('All Campuses',
+                          style: TextStyle(fontWeight: FontWeight.bold))),
                       DataCell(Text(
                         _getTotalByRoomType('quiet').toString(),
                         style: TextStyle(fontWeight: FontWeight.bold),
@@ -491,14 +490,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
-  
+
   // Build a row for the campus type breakdown table
   DataRow _buildCampusTypeRow(String campus) {
     final quietRooms = _roomCounts[campus]?['quiet'] ?? 0;
     final conferenceRooms = _roomCounts[campus]?['conference'] ?? 0;
     final studyRooms = _roomCounts[campus]?['study'] ?? 0;
     final totalRooms = _roomCounts[campus]?['total'] ?? 0;
-    
+
     return DataRow(
       cells: [
         DataCell(Text(campus)),
@@ -509,7 +508,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ],
     );
   }
-  
+
   // Get total rooms by type across all campuses
   int _getTotalByRoomType(String type) {
     int total = 0;
@@ -518,7 +517,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
     return total;
   }
-  
+
   // Get total rooms across all campuses
   int _getTotalRooms() {
     int total = 0;

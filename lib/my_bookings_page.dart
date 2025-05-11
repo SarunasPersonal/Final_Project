@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
+import 'package:flutter_ucs_app/models/room_model.dart';
 import 'package:flutter_ucs_app/booking_model.dart';
 import 'package:intl/intl.dart';
 
@@ -12,20 +13,18 @@ class MyBookingsPage extends StatefulWidget {
 
 class _MyBookingsPageState extends State<MyBookingsPage> {
   final BookingService _bookingService = BookingService();
-  late List<Booking> userBookings;
+  List<Booking> userBookings = [];
 
   @override
   void initState() {
     super.initState();
-    _loadBookings(); // Load bookings when the page initializes
+    _loadUserBookings();
   }
 
-  // Load bookings for the current user
-  void _loadBookings() {
+  void _loadUserBookings() {
     if (CurrentUser.userId != null) {
       userBookings = _bookingService.getUserBookings(CurrentUser.userId!);
-    } else {
-      userBookings = [];
+      setState(() {});
     }
   }
 
@@ -39,10 +38,14 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
   // Get an icon based on the booking location
   IconData _getIconForLocation(String location) {
     switch (location) {
-      case 'Taunton': return Icons.school;
-      case 'Bridgwater': return Icons.account_balance;
-      case 'Cannington': return Icons.park;
-      default: return Icons.location_on;
+      case 'Taunton':
+        return Icons.school;
+      case 'Bridgwater':
+        return Icons.account_balance;
+      case 'Cannington':
+        return Icons.park;
+      default:
+        return Icons.location_on;
     }
   }
 
@@ -64,12 +67,10 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
             TextButton(
               onPressed: () {
                 _bookingService.deleteBooking(
-                  booking.location, 
-                  booking.dateTime,
-                  booking.roomType
-                );
+                    booking.location, booking.dateTime, booking.roomType);
                 Navigator.of(context).pop();
-                setState(() => _loadBookings()); // Reload bookings after deletion
+                setState(() =>
+                    _loadUserBookings()); // Reload bookings after deletion
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('Booking cancelled successfully'),
@@ -168,15 +169,18 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
       itemBuilder: (context, index) {
         final booking = userBookings[index];
         final formattedDateTime = _formatDateTime(booking.dateTime);
-        final isUpcoming = booking.dateTime.isAfter(DateTime.now()); // Check if the booking is upcoming
-        
+        final isUpcoming = booking.dateTime
+            .isAfter(DateTime.now()); // Check if the booking is upcoming
+
         return Card(
           margin: const EdgeInsets.only(bottom: 16),
           elevation: 2,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
             side: BorderSide(
-              color: isUpcoming ? primaryColor.withAlpha(77) : Colors.grey.withAlpha(77),
+              color: isUpcoming
+                  ? primaryColor.withAlpha(77)
+                  : Colors.grey.withAlpha(77),
               width: 1,
             ),
           ),
@@ -187,21 +191,25 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
               children: [
                 Row(
                   children: [
-                    _buildLocationIcon(booking.location, isUpcoming), // Location icon
+                    _buildLocationIcon(
+                        booking.location, isUpcoming), // Location icon
                     const SizedBox(width: 16),
-                    _buildBookingDetails(booking, formattedDateTime, isUpcoming), // Booking details
+                    _buildBookingDetails(booking, formattedDateTime,
+                        isUpcoming), // Booking details
                     if (isUpcoming)
                       IconButton(
-                        icon: const Icon(Icons.delete_outline, color: Colors.red),
-                        onPressed: () => _deleteBooking(booking), // Delete booking
+                        icon:
+                            const Icon(Icons.delete_outline, color: Colors.red),
+                        onPressed: () =>
+                            _deleteBooking(booking), // Delete booking
                       ),
                   ],
                 ),
-                
+
                 // Show room features if any exist
-                if (booking.features.isNotEmpty) 
+                if (booking.features.isNotEmpty)
                   _buildFeaturesList(booking.features, isUpcoming),
-                
+
                 const SizedBox(height: 16),
                 _buildStatusBanner(isUpcoming), // Status banner
               ],
@@ -217,9 +225,8 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: isUpcoming
-            ? primaryColor.withAlpha(26)
-            : Colors.grey.withAlpha(26),
+        color:
+            isUpcoming ? primaryColor.withAlpha(26) : Colors.grey.withAlpha(26),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Icon(
@@ -231,7 +238,8 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
   }
 
   // Build the booking details widget
-  Widget _buildBookingDetails(Booking booking, String formattedDateTime, bool isUpcoming) {
+  Widget _buildBookingDetails(
+      Booking booking, String formattedDateTime, bool isUpcoming) {
     return Expanded(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -277,44 +285,37 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
 
   // Build the list of room features
   Widget _buildFeaturesList(List<RoomFeature> features, bool isUpcoming) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 12),
-        const Divider(),
-        const SizedBox(height: 8),
-        Text(
-          'Features:',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: isUpcoming ? primaryColor : Colors.grey,
-            fontSize: 14,
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: features.map((feature) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: isUpcoming ? Colors.blue.shade50 : Colors.grey.shade200,
+            borderRadius: BorderRadius.circular(12),
           ),
-        ),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 8,
-          children: features.map((feature) {
-            return Chip(
-              backgroundColor: isUpcoming 
-                  ? primaryColor.withAlpha(26) 
-                  : Colors.grey.withAlpha(26),
-              label: Text(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                feature.icon,
+                size: 16,
+                color: isUpcoming ? Colors.blue.shade700 : Colors.grey.shade700,
+              ),
+              const SizedBox(width: 4),
+              Text(
                 feature.displayName,
                 style: TextStyle(
                   fontSize: 12,
-                  color: isUpcoming ? primaryColor : Colors.grey,
+                  color:
+                      isUpcoming ? Colors.blue.shade700 : Colors.grey.shade700,
                 ),
               ),
-              avatar: Icon(
-                feature.icon, 
-                size: 14, 
-                color: isUpcoming ? primaryColor : Colors.grey,
-              ),
-            );
-          }).toList(),
-        ),
-      ],
+            ],
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -324,9 +325,8 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
-        color: isUpcoming
-            ? primaryColor.withAlpha(26)
-            : Colors.grey.withAlpha(26),
+        color:
+            isUpcoming ? primaryColor.withAlpha(26) : Colors.grey.withAlpha(26),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(

@@ -1,4 +1,4 @@
-// lib/admin/models/room_model.dart
+// lib/models/room_model.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_ucs_app/booking_model.dart'; // For RoomType and RoomFeature enums
 import 'package:logging/logging.dart';
@@ -237,69 +237,40 @@ class RoomService {
     }
   }
   
-  /// Get room counts by campus
-  Future<Map<String, Map<String, int>>> getRoomCountsByCampus() async {
-    Map<String, Map<String, int>> counts = {
-      'Taunton': {'quiet': 0, 'conference': 0, 'study': 0, 'total': 0},
-      'Bridgwater': {'quiet': 0, 'conference': 0, 'study': 0, 'total': 0},
-      'Cannington': {'quiet': 0, 'conference': 0, 'study': 0, 'total': 0},
-    };
-    
+  /// Check if a room is available at a specific time
+  Future<bool> isRoomAvailable(String roomId, DateTime dateTime) async {
     try {
-      QuerySnapshot snapshot = await _firestore.collection(_collection).get();
+      // Get bookings for this room around the requested time
+      final startTime = dateTime.subtract(const Duration(hours: 1));
+      final endTime = dateTime.add(const Duration(hours: 1));
       
-      for (var doc in snapshot.docs) {
-        var room = Room.fromFirestore(doc);
-        
-        if (counts.containsKey(room.campus)) {
-          String typeKey;
-          switch (room.type) {
-            case RoomType.quietRoom:
-              typeKey = 'quiet';
-              break;
-            case RoomType.conferenceRoom:
-              typeKey = 'conference';
-              break;
-            case RoomType.studyRoom:
-              typeKey = 'study';
-              break;
-          }
-          
-          counts[room.campus]![typeKey] = (counts[room.campus]![typeKey] ?? 0) + 1;
-          counts[room.campus]!['total'] = (counts[room.campus]!['total'] ?? 0) + 1;
-        }
-      }
+      QuerySnapshot snapshot = await _firestore.collection('bookings')
+          .where('roomId', isEqualTo: roomId)
+          .where('dateTime', isGreaterThanOrEqualTo: startTime)
+          .where('dateTime', isLessThanOrEqualTo: endTime)
+          .get();
       
-      return counts;
+      // If there are no bookings in this time range, the room is available
+      return snapshot.docs.isEmpty;
     } catch (e) {
-      _logger.warning('Error getting room counts: $e');
-      return counts;
+      _logger.warning('Error checking room availability: $e');
+      // Default to available if there's an error checking
+      return true;
     }
   }
   
-  /// Get the total capacity by campus
-  Future<Map<String, int>> getTotalCapacityByCampus() async {
-    Map<String, int> capacity = {
-      'Taunton': 0,
-      'Bridgwater': 0,
-      'Cannington': 0,
-    };
-    
+  /// Get bookings for a specific room
+  Future<List<Map<String, dynamic>>> getRoomBookings(String roomId) async {
     try {
-      QuerySnapshot snapshot = await _firestore.collection(_collection).get();
+      QuerySnapshot snapshot = await _firestore.collection('bookings')
+          .where('roomId', isEqualTo: roomId)
+          .orderBy('dateTime')
+          .get();
       
-      for (var doc in snapshot.docs) {
-        var room = Room.fromFirestore(doc);
-        
-        if (capacity.containsKey(room.campus)) {
-          capacity[room.campus] = (capacity[room.campus] ?? 0) + room.capacity;
-        }
-      }
-      
-      return capacity;
+      return snapshot.docs.map((doc) => doc.data() as Map<String, dynamic>).toList();
     } catch (e) {
-      _logger.warning('Error getting room capacity: $e');
-      return capacity;
+      _logger.warning('Error getting room bookings: $e');
+      return [];
     }
   }
   
@@ -312,312 +283,8 @@ class RoomService {
         return; // Rooms already exist, no need to initialize
       }
       
-      // Default rooms for each campus
-      List<Room> defaultRooms = [
-        // Taunton campus
-        Room(
-          id: 'taunton-quiet-1',
-          name: 'Quiet Study Room 1',
-          campus: 'Taunton',
-          type: RoomType.quietRoom,
-          capacity: 1,
-          features: [RoomFeature.computerEquipment],
-          location: 'Library, Ground Floor',
-        ),
-        Room(
-          id: 'taunton-quiet-2',
-          name: 'Quiet Study Room 2',
-          campus: 'Taunton',
-          type: RoomType.quietRoom,
-          capacity: 1,
-          features: [RoomFeature.computerEquipment],
-          location: 'Library, Ground Floor',
-        ),
-        Room(
-          id: 'taunton-quiet-3',
-          name: 'Quiet Study Room 3',
-          campus: 'Taunton',
-          type: RoomType.quietRoom,
-          capacity: 1,
-          features: [RoomFeature.computerEquipment],
-          location: 'Library, First Floor',
-        ),
-        Room(
-          id: 'taunton-conference-1',
-          name: 'Conference Room A',
-          campus: 'Taunton',
-          type: RoomType.conferenceRoom,
-          capacity: 20,
-          features: [
-            RoomFeature.projector,
-            RoomFeature.whiteboard,
-            RoomFeature.videoConferencing,
-            RoomFeature.computerEquipment,
-          ],
-          location: 'Main Building, Room M102',
-        ),
-        Room(
-          id: 'taunton-conference-2',
-          name: 'Conference Room B',
-          campus: 'Taunton',
-          type: RoomType.conferenceRoom,
-          capacity: 15,
-          features: [
-            RoomFeature.projector,
-            RoomFeature.whiteboard,
-            RoomFeature.videoConferencing,
-          ],
-          location: 'Main Building, Room M103',
-        ),
-        Room(
-          id: 'taunton-conference-3',
-          name: 'Conference Room C',
-          campus: 'Taunton',
-          type: RoomType.conferenceRoom,
-          capacity: 10,
-          features: [
-            RoomFeature.projector,
-            RoomFeature.whiteboard,
-          ],
-          location: 'Main Building, Room M104',
-        ),
-        Room(
-          id: 'taunton-study-1',
-          name: 'Study Room 1',
-          campus: 'Taunton',
-          type: RoomType.studyRoom,
-          capacity: 6,
-          features: [
-            RoomFeature.whiteboard,
-            RoomFeature.computerEquipment,
-          ],
-          location: 'Library, Second Floor',
-        ),
-        Room(
-          id: 'taunton-study-2',
-          name: 'Study Room 2',
-          campus: 'Taunton',
-          type: RoomType.studyRoom,
-          capacity: 4,
-          features: [
-            RoomFeature.whiteboard,
-          ],
-          location: 'Library, Second Floor',
-        ),
-        Room(
-          id: 'taunton-study-3',
-          name: 'Study Room 3',
-          campus: 'Taunton',
-          type: RoomType.studyRoom,
-          capacity: 8,
-          features: [
-            RoomFeature.whiteboard,
-            RoomFeature.computerEquipment,
-          ],
-          location: 'Library, Third Floor',
-        ),
-        
-        // Bridgwater campus
-        Room(
-          id: 'bridgwater-quiet-1',
-          name: 'Quiet Study Pod 1',
-          campus: 'Bridgwater',
-          type: RoomType.quietRoom,
-          capacity: 1,
-          features: [],
-          location: 'Learning Resource Center',
-        ),
-        Room(
-          id: 'bridgwater-quiet-2',
-          name: 'Quiet Study Pod 2',
-          campus: 'Bridgwater',
-          type: RoomType.quietRoom,
-          capacity: 1,
-          features: [],
-          location: 'Learning Resource Center',
-        ),
-        Room(
-          id: 'bridgwater-quiet-3',
-          name: 'Quiet Study Room',
-          campus: 'Bridgwater',
-          type: RoomType.quietRoom,
-          capacity: 2,
-          features: [RoomFeature.computerEquipment],
-          location: 'Learning Resource Center',
-        ),
-        Room(
-          id: 'bridgwater-conference-1',
-          name: 'Main Conference Room',
-          campus: 'Bridgwater',
-          type: RoomType.conferenceRoom,
-          capacity: 30,
-          features: [
-            RoomFeature.projector,
-            RoomFeature.whiteboard,
-            RoomFeature.videoConferencing,
-            RoomFeature.computerEquipment,
-          ],
-          location: 'Bath Building, Ground Floor',
-        ),
-        Room(
-          id: 'bridgwater-conference-2',
-          name: 'Conference Room A',
-          campus: 'Bridgwater',
-          type: RoomType.conferenceRoom,
-          capacity: 12,
-          features: [
-            RoomFeature.projector,
-            RoomFeature.whiteboard,
-          ],
-          location: 'Bath Building, First Floor',
-        ),
-        Room(
-          id: 'bridgwater-conference-3',
-          name: 'Conference Room B',
-          campus: 'Bridgwater',
-          type: RoomType.conferenceRoom,
-          capacity: 12,
-          features: [
-            RoomFeature.projector,
-            RoomFeature.whiteboard,
-          ],
-          location: 'Bath Building, First Floor',
-        ),
-        Room(
-          id: 'bridgwater-study-1',
-          name: 'Group Study Room 1',
-          campus: 'Bridgwater',
-          type: RoomType.studyRoom,
-          capacity: 8,
-          features: [
-            RoomFeature.whiteboard,
-          ],
-          location: 'Learning Resource Center',
-        ),
-        Room(
-          id: 'bridgwater-study-2',
-          name: 'Group Study Room 2',
-          campus: 'Bridgwater',
-          type: RoomType.studyRoom,
-          capacity: 6,
-          features: [
-            RoomFeature.whiteboard,
-          ],
-          location: 'Learning Resource Center',
-        ),
-        Room(
-          id: 'bridgwater-study-3',
-          name: 'Group Study Room 3',
-          campus: 'Bridgwater',
-          type: RoomType.studyRoom,
-          capacity: 10,
-          features: [
-            RoomFeature.whiteboard,
-            RoomFeature.projector,
-          ],
-          location: 'Learning Resource Center',
-        ),
-        
-        // Cannington campus
-        Room(
-          id: 'cannington-quiet-1',
-          name: 'Quiet Study Room 1',
-          campus: 'Cannington',
-          type: RoomType.quietRoom,
-          capacity: 1,
-          features: [],
-          location: 'Library Building',
-        ),
-        Room(
-          id: 'cannington-quiet-2',
-          name: 'Quiet Study Room 2',
-          campus: 'Cannington',
-          type: RoomType.quietRoom,
-          capacity: 1,
-          features: [],
-          location: 'Library Building',
-        ),
-        Room(
-          id: 'cannington-quiet-3',
-          name: 'Quiet Study Room 3',
-          campus: 'Cannington',
-          type: RoomType.quietRoom,
-          capacity: 1,
-          features: [],
-          location: 'Library Building',
-        ),
-        Room(
-          id: 'cannington-conference-1',
-          name: 'Rodway Conference Room',
-          campus: 'Cannington',
-          type: RoomType.conferenceRoom,
-          capacity: 20,
-          features: [
-            RoomFeature.projector,
-            RoomFeature.whiteboard,
-            RoomFeature.videoConferencing,
-          ],
-          location: 'Rodway Building, Room R101',
-        ),
-        Room(
-          id: 'cannington-conference-2',
-          name: 'Small Conference Room',
-          campus: 'Cannington',
-          type: RoomType.conferenceRoom,
-          capacity: 8,
-          features: [
-            RoomFeature.projector,
-            RoomFeature.whiteboard,
-          ],
-          location: 'Rodway Building, Room R102',
-        ),
-        Room(
-          id: 'cannington-conference-3',
-          name: 'Rural Business Conference Room',
-          campus: 'Cannington',
-          type: RoomType.conferenceRoom,
-          capacity: 15,
-          features: [
-            RoomFeature.projector,
-            RoomFeature.whiteboard,
-            RoomFeature.videoConferencing,
-          ],
-          location: 'Rural Business Center',
-        ),
-        Room(
-          id: 'cannington-study-1',
-          name: 'Study Group Room 1',
-          campus: 'Cannington',
-          type: RoomType.studyRoom,
-          capacity: 6,
-          features: [
-            RoomFeature.whiteboard,
-          ],
-          location: 'Library Building',
-        ),
-        Room(
-          id: 'cannington-study-2',
-          name: 'Study Group Room 2',
-          campus: 'Cannington',
-          type: RoomType.studyRoom,
-          capacity: 4,
-          features: [
-            RoomFeature.whiteboard,
-          ],
-          location: 'Library Building',
-        ),
-        Room(
-          id: 'cannington-study-3',
-          name: 'Study Group Room 3',
-          campus: 'Cannington',
-          type: RoomType.studyRoom,
-          capacity: 6,
-          features: [
-            RoomFeature.whiteboard,
-          ],
-          location: 'Rodway Building',
-        ),
-      ];
+      // Create default rooms if none exist
+      List<Room> defaultRooms = _createDefaultRooms();
       
       // Add all default rooms to Firestore
       WriteBatch batch = _firestore.batch();
@@ -632,5 +299,114 @@ class RoomService {
     } catch (e) {
       _logger.warning('Error initializing default rooms: $e');
     }
+  }
+  
+  /// Create a list of default rooms for initialization
+  List<Room> _createDefaultRooms() {
+    return [
+      // Taunton campus rooms
+      Room(
+        id: 'taunton-quiet-1',
+        name: 'Quiet Study Room 1',
+        campus: 'Taunton',
+        type: RoomType.quietRoom,
+        capacity: 1,
+        features: [RoomFeature.computerEquipment],
+        location: 'Library, Ground Floor',
+      ),
+      Room(
+        id: 'taunton-conference-1',
+        name: 'Conference Room A',
+        campus: 'Taunton',
+        type: RoomType.conferenceRoom,
+        capacity: 20,
+        features: [
+          RoomFeature.projector,
+          RoomFeature.whiteboard,
+          RoomFeature.videoConferencing,
+        ],
+        location: 'Main Building, Room M102',
+      ),
+      Room(
+        id: 'taunton-study-1',
+        name: 'Study Room 1',
+        campus: 'Taunton',
+        type: RoomType.studyRoom,
+        capacity: 6,
+        features: [
+          RoomFeature.whiteboard,
+          RoomFeature.computerEquipment,
+        ],
+        location: 'Library, Second Floor',
+      ),
+      
+      // Bridgwater campus rooms
+      Room(
+        id: 'bridgwater-quiet-1',
+        name: 'Quiet Study Pod 1',
+        campus: 'Bridgwater',
+        type: RoomType.quietRoom,
+        capacity: 1,
+        location: 'Learning Resource Center',
+      ),
+      Room(
+        id: 'bridgwater-conference-1',
+        name: 'Main Conference Room',
+        campus: 'Bridgwater',
+        type: RoomType.conferenceRoom,
+        capacity: 30,
+        features: [
+          RoomFeature.projector,
+          RoomFeature.whiteboard,
+          RoomFeature.videoConferencing,
+        ],
+        location: 'Bath Building, Ground Floor',
+      ),
+      Room(
+        id: 'bridgwater-study-1',
+        name: 'Group Study Room 1',
+        campus: 'Bridgwater',
+        type: RoomType.studyRoom,
+        capacity: 8,
+        features: [
+          RoomFeature.whiteboard,
+        ],
+        location: 'Learning Resource Center',
+      ),
+      
+      // Cannington campus rooms
+      Room(
+        id: 'cannington-quiet-1',
+        name: 'Quiet Study Room 1',
+        campus: 'Cannington',
+        type: RoomType.quietRoom,
+        capacity: 1,
+        location: 'Library Building',
+      ),
+      Room(
+        id: 'cannington-conference-1',
+        name: 'Rodway Conference Room',
+        campus: 'Cannington',
+        type: RoomType.conferenceRoom,
+        capacity: 20,
+        features: [
+          RoomFeature.projector,
+          RoomFeature.whiteboard,
+          RoomFeature.videoConferencing,
+        ],
+        location: 'Rodway Building, Room R101',
+      ),
+      Room(
+        id: 'cannington-study-1',
+        name: 'Study Group Room 1',
+        campus: 'Cannington',
+        type: RoomType.studyRoom,
+        capacity: 6,
+        features: [
+          RoomFeature.whiteboard,
+        ],
+        location: 'Library Building',
+      ),
+    ];
   }
 }
