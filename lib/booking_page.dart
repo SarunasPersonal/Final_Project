@@ -1,10 +1,10 @@
 // lib/booking_page.dart
+import 'package:flutter_ucs_app/admin/models/current_user.dart' as admin;
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/booking_model.dart';
 import 'package:flutter_ucs_app/models/room_model.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter_ucs_app/admin/models/current_user.dart' as admin; // Import CurrentUser with alias
 
 class BookingPage extends StatefulWidget {
   final String location;

@@ -2,9 +2,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/models/room_model.dart';
-import 'package:flutter_ucs_app/booking_model.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter_ucs_app/admin/models/current_user.dart'; // Import CurrentUser
+import 'package:flutter_ucs_app/admin/models/current_user.dart' as admin;
+import 'package:flutter_ucs_app/booking_model.dart';
 
 class MyBookingsPage extends StatefulWidget {
   const MyBookingsPage({super.key});
@@ -27,7 +27,7 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
   // Updated to use async Firebase calls
   Future<void> _loadUserBookings() async {
     setState(() {
-      _isLoading = true;git
+      _isLoading = true;
     });
     
     try {
