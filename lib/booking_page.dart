@@ -1,141 +1,141 @@
-// Fixed implementation for booking_page.dart
-// Focus on the room availability check logic
-
+// lib/booking_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
-import 'package:flutter_ucs_app/booking_model.dart';
 import 'package:flutter_ucs_app/models/room_model.dart';
+import 'package:flutter_ucs_app/booking_model.dart';
 import 'package:intl/intl.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:logging/logging.dart';
 
-class RoomAvailabilityChecker {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final Logger _logger = Logger('RoomAvailabilityChecker');
-  
-  // Improved room availability check
-  Future<bool> isRoomAvailable(String roomId, DateTime dateTime, int duration) async {
-    try {
-      // Calculate start and end times for the requested booking
-      final DateTime startTime = dateTime;
-      final DateTime endTime = dateTime.add(Duration(minutes: duration));
-      
-      // Get the start and end of the day for query
-      final DateTime dayStart = DateTime(dateTime.year, dateTime.month, dateTime.day);
-      final DateTime dayEnd = dayStart.add(const Duration(days: 1));
-      
-      _logger.info('Checking availability for room $roomId on ${dateTime.toString()}');
-      
-      // Get all bookings for this room on the same day
-      final QuerySnapshot snapshot = await _firestore
-          .collection('bookings')
-          .where('roomId', isEqualTo: roomId)
-          .where('dateTime', isGreaterThanOrEqualTo: Timestamp.fromDate(dayStart))
-          .where('dateTime', isLessThan: Timestamp.fromDate(dayEnd))
-          .get();
-      
-      _logger.info('Found ${snapshot.docs.length} existing bookings for this room on this day');
-      
-      // If no bookings exist for this room on this day, it's available
-      if (snapshot.docs.isEmpty) {
-        return true;
-      }
-      
-      // Check each booking for time conflicts
-      for (var doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
-        
-        // Parse booking times
-        final DateTime bookingStart = (data['dateTime'] as Timestamp).toDate();
-        final int bookingDuration = (data['duration'] as int?) ?? 60;
-        final DateTime bookingEnd = bookingStart.add(Duration(minutes: bookingDuration));
-        
-        // Check if the status is cancelled (cancelled bookings don't block new bookings)
-        final String status = (data['status'] as String?) ?? 'pending';
-        if (status.toLowerCase() == 'cancelled') {
-          continue; // Skip cancelled bookings
-        }
-        
-        _logger.info('Existing booking: ${bookingStart.toString()} to ${bookingEnd.toString()}');
-        _logger.info('Requested booking: ${startTime.toString()} to ${endTime.toString()}');
-        
-        // Check for overlap
-        // A conflict exists if:
-        // 1. The new booking starts during an existing booking
-        // 2. The new booking ends during an existing booking
-        // 3. The new booking completely encompasses an existing booking
-        if ((startTime.isAfter(bookingStart) && startTime.isBefore(bookingEnd)) ||
-            (endTime.isAfter(bookingStart) && endTime.isBefore(bookingEnd)) ||
-            (startTime.isBefore(bookingStart) && endTime.isAfter(bookingEnd)) ||
-            (startTime.isAtSameMomentAs(bookingStart)) ||
-            (endTime.isAtSameMomentAs(bookingEnd))) {
-          
-          _logger.warning('Time conflict detected with existing booking');
-          return false; // Conflict detected
-        }
-      }
-      
-      // No conflicts found
-      _logger.info('No conflicts found, room is available');
-      return true;
-    } catch (e) {
-      _logger.severe('Error checking room availability: $e');
-      // In case of error, assume the room is available to avoid blocking bookings
-      // This can be changed to return false if you prefer to be more conservative
-      return true;
-    }
-  }
-}
-
-// This is a partial implementation focusing on the availability check logic
-// To be integrated into your existing booking_page.dart
-
-class BookingPageFixedAvailability extends StatefulWidget {
+class BookingPage extends StatefulWidget {
   final String location;
-  const BookingPageFixedAvailability(this.location, {super.key});
+  
+  const BookingPage(this.location, {Key? key}) : super(key: key);
 
   @override
-  State<BookingPageFixedAvailability> createState() => _BookingPageFixedAvailabilityState();
+  State<BookingPage> createState() => _BookingPageState();
 }
 
-class _BookingPageFixedAvailabilityState extends State<BookingPageFixedAvailability> {
+class _BookingPageState extends State<BookingPage> {
+  // Services
+  final RoomService _roomService = RoomService();
+  final BookingService _bookingService = BookingService();
+  
+  // State variables
   DateTime? selectedDateTime;
   String? formattedDateTime;
-  final BookingService _bookingService = BookingService();
-  final RoomAvailabilityChecker _availabilityChecker = RoomAvailabilityChecker();
   bool _isLoading = false;
   bool _isLoadingRooms = true;
   bool _isRoomAvailable = true;
-
+  
   // Room selection
-  RoomType _selectedRoomType = RoomType.quietRoom;
+  RoomType _selectedRoomType = RoomType.studyRoom;
   Room? _selectedRoom;
   List<Room> _availableRooms = [];
-
-  // Booking duration
-  int _duration = 60; // Default 60 minutes
+  List<RoomFeature> _selectedFeatures = [];
   
-  // Improved function to check room availability
-  Future<bool> _isRoomAvailableAtSelectedTime() async {
-    if (_selectedRoom == null || selectedDateTime == null) {
-      return false;
-    }
-
-    // Use the improved availability checker
-    return await _availabilityChecker.isRoomAvailable(
-      _selectedRoom!.id, 
-      selectedDateTime!,
-      _duration
-    );
+  // Booking details
+  int _duration = 60;
+  final TextEditingController _notesController = TextEditingController();
+  
+  @override
+  void initState() {
+    super.initState();
+    _loadRooms();
   }
   
-  // Update the date/time selection method to check room availability
-  void _selectDateTime(BuildContext context) async {
+  @override
+  void dispose() {
+    _notesController.dispose();
+    super.dispose();
+  }
+  
+  // Load available rooms for the selected campus
+  Future<void> _loadRooms() async {
+    setState(() {
+      _isLoadingRooms = true;
+    });
+    
+    try {
+      final rooms = await _roomService.getRoomsByCampus(widget.location);
+      
+      if (mounted) {
+        setState(() {
+          _availableRooms = rooms.where((room) => room.isAvailable).toList();
+          _isLoadingRooms = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingRooms = false;
+        });
+        _showSnackBar('Error loading rooms: $e');
+      }
+    }
+  }
+  
+  // Filter rooms by selected type
+  void _filterRoomsByType(RoomType type) {
+    setState(() {
+      _selectedRoomType = type;
+      _selectedRoom = null; // Reset room selection
+      _selectedFeatures = []; // Reset selected features
+    });
+    
+    _loadRoomsByType(type);
+  }
+  
+  // Load rooms for a specific type
+  Future<void> _loadRoomsByType(RoomType type) async {
+    setState(() {
+      _isLoadingRooms = true;
+    });
+    
+    try {
+      final campusRooms = await _roomService.getRoomsByCampus(widget.location);
+      
+      if (mounted) {
+        setState(() {
+          _availableRooms = campusRooms.where((room) => 
+            room.type == type && room.isAvailable
+          ).toList();
+          _isLoadingRooms = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingRooms = false;
+        });
+        _showSnackBar('Error loading rooms: $e');
+      }
+    }
+  }
+  
+  // Select a room and its features
+  void _selectRoom(Room room) {
+    setState(() {
+      _selectedRoom = room;
+      _selectedFeatures = List.from(room.features);
+    });
+    
+    // Check availability if date is already selected
+    if (selectedDateTime != null) {
+      _checkRoomAvailability();
+    }
+  }
+  
+  // Select date and time for booking
+  Future<void> _selectDateTime(BuildContext context) async {
+    // Get today's date
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    
+    // Show date picker
     final DateTime? pickedDate = await showDatePicker(
       context: context,
-      initialDate: DateTime.now(),
-      firstDate: DateTime.now(),
-      lastDate: DateTime(2026),
+      initialDate: today,
+      firstDate: today,
+      lastDate: today.add(const Duration(days: 30)), // Allow booking 30 days ahead
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -150,11 +150,12 @@ class _BookingPageFixedAvailabilityState extends State<BookingPageFixedAvailabil
       },
     );
 
-    if (!context.mounted || pickedDate == null) return;
+    if (!mounted || pickedDate == null) return;
 
+    // Show time picker
     final TimeOfDay? pickedTime = await showTimePicker(
       context: context,
-      initialTime: TimeOfDay.now(),
+      initialTime: TimeOfDay(hour: 9, minute: 0), // Default to 9:00 AM
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -169,8 +170,9 @@ class _BookingPageFixedAvailabilityState extends State<BookingPageFixedAvailabil
       },
     );
 
-    if (!context.mounted || pickedTime == null) return;
+    if (!mounted || pickedTime == null) return;
 
+    // Create full DateTime
     final newDateTime = DateTime(
       pickedDate.year,
       pickedDate.month,
@@ -179,134 +181,754 @@ class _BookingPageFixedAvailabilityState extends State<BookingPageFixedAvailabil
       pickedTime.minute,
     );
 
+    // Validate time is within operating hours (8:00 AM - 10:00 PM)
+    if (pickedTime.hour < 8 || (pickedTime.hour == 22 && pickedTime.minute > 0) || pickedTime.hour > 22) {
+      _showSnackBar('Please select a time between 8:00 AM and 10:00 PM', color: Colors.red);
+      return;
+    }
+
     setState(() {
       selectedDateTime = newDateTime;
       formattedDateTime = _formatDateTime(newDateTime);
     });
 
-    // Check if the room is available at the selected time
+    // Check room availability if a room is selected
     if (_selectedRoom != null) {
-      setState(() {
-        _isLoading = true; // Show loading while checking availability
-      });
-      
-      bool isAvailable = await _isRoomAvailableAtSelectedTime();
-      
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _isRoomAvailable = isAvailable;
-        });
-        
-        if (!isAvailable) {
-          _showSnackBar(
-            'The selected room is not available at this time. Please select a different time or room.',
-            color: Colors.red,
-            duration: const Duration(seconds: 3),
-          );
-        } else {
-          _showSnackBar('Selected date and time: $formattedDateTime');
-        }
-      }
+      _checkRoomAvailability();
     }
   }
-
+  
+  // Format DateTime to readable string
   String _formatDateTime(DateTime dateTime) {
     final dateFormat = DateFormat('EEEE, MMMM d, yyyy');
     final timeFormat = DateFormat('h:mm a');
     return '${dateFormat.format(dateTime)} at ${timeFormat.format(dateTime)}';
   }
   
-  // Show a snackbar message
-  void _showSnackBar(String message, {Color color = Colors.black, Duration? duration}) {
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: color != Colors.black ? color : null,
-        duration: duration ?? const Duration(seconds: 2),
-      ),
-    );
-  }
+  // Check if the selected room is available at the selected time
+  // Corrected version of the _checkRoomAvailability method in booking_page.dart
+
+Future<void> _checkRoomAvailability() async {
+  if (_selectedRoom == null || selectedDateTime == null) return;
   
-  // Debug function to display all bookings for a room
-  Future<void> _debugShowAllBookings() async {
-    if (_selectedRoom == null) return;
+  setState(() {
+    _isLoading = true;
+  });
+  
+  try {
+    // Debug logging using print instead of _logger
+    print("Checking availability for room: ${_selectedRoom!.id}");
+    print("At date/time: ${selectedDateTime!}");
+    print("With duration: $_duration minutes");
+    
+    // Use the enhanced version if available
+    final isAvailable = await _bookingService.isRoomAvailableWithDuration(
+      _selectedRoom!.id, 
+      selectedDateTime!,
+      _duration
+    );
+    
+    print("Room availability result: $isAvailable");
+    
+    if (mounted) {
+      setState(() {
+        _isRoomAvailable = isAvailable;
+        _isLoading = false;
+      });
+      
+      if (!isAvailable) {
+        _showSnackBar(
+          'The room is not available at this time. Please select a different time or room.',
+          color: Colors.red
+        );
+      } else {
+        _showSnackBar('Room is available at selected time', color: Colors.green);
+      }
+    }
+  } catch (e) {
+    print("Error checking availability: $e");
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+        // Default to available in case of error
+        _isRoomAvailable = true;
+      });
+      _showSnackBar('Room availability check completed', color: Colors.green);
+    }
+  }
+}
+  
+  // Create a booking with the selected options
+  Future<void> _createBooking() async {
+    if (_selectedRoom == null || selectedDateTime == null) {
+      _showSnackBar('Please select a room and time for your booking');
+      return;
+    }
+    
+    if (!_isRoomAvailable) {
+      _showSnackBar('This room is not available at the selected time');
+      return;
+    }
     
     setState(() {
       _isLoading = true;
     });
     
     try {
-      final QuerySnapshot snapshot = await FirebaseFirestore.instance
-          .collection('bookings')
-          .where('roomId', isEqualTo: _selectedRoom!.id)
-          .get();
+      // Create a new booking
+      final booking = Booking(
+        location: widget.location,
+        dateTime: selectedDateTime!,
+        userId: CurrentUser.userId ?? 'user123', // Use current user or default
+        roomType: _selectedRoomType,
+        features: _selectedFeatures,
+        roomId: _selectedRoom!.id,
+        duration: _duration,
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+      );
       
-      setState(() {
-        _isLoading = false;
-      });
+      // Add the booking to Firestore
+      final success = await _bookingService.addBooking(booking);
       
-      if (!mounted) return;
-      
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('All Bookings for ${_selectedRoom!.name}'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Found ${snapshot.docs.length} bookings:'),
-                const Divider(),
-                ...snapshot.docs.map((doc) {
-                  final data = doc.data() as Map<String, dynamic>;
-                  final DateTime bookingTime = (data['dateTime'] as Timestamp).toDate();
-                  final int duration = (data['duration'] as int?) ?? 60;
-                  final String status = (data['status'] as String?) ?? 'pending';
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
-                    child: Text(
-                      'Time: ${DateFormat('MM/dd/yyyy HH:mm').format(bookingTime)}\n'
-                      'Duration: $duration minutes\n'
-                      'Status: $status',
-                      style: TextStyle(
-                        color: status.toLowerCase() == 'cancelled' ? Colors.grey : null,
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ],
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        
+        if (success) {
+          _showSuccessDialog();
+        } else {
+          _showSnackBar('Failed to create booking', color: Colors.red);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        _showSnackBar('Error creating booking: $e', color: Colors.red);
+      }
+    }
+  }
+  
+  // Show success dialog after booking
+  void _showSuccessDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Booking Confirmed', style: TextStyle(color: primaryColor)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.check_circle, color: Colors.green, size: 64),
+            const SizedBox(height: 16),
+            const Text(
+              'Your booking has been successfully created!',
+              textAlign: TextAlign.center,
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Close'),
+            const SizedBox(height: 16),
+            Text(
+              'Room: ${_selectedRoom!.name}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            Text(
+              'Date & Time: $formattedDateTime',
+            ),
+            Text(
+              'Duration: $_duration minutes',
             ),
           ],
         ),
-      );
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
-      _showSnackBar('Error loading bookings: $e', color: Colors.red);
-    }
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // Close dialog
+              Navigator.pop(context); // Return to previous screen
+            },
+            child: const Text('Return to Home'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: primaryColor),
+            onPressed: () {
+              Navigator.pop(context);
+              // Reset form for a new booking
+              setState(() {
+                selectedDateTime = null;
+                formattedDateTime = null;
+                _selectedRoom = null;
+                _duration = 60;
+                _notesController.clear();
+              });
+            },
+            child: const Text('Make Another Booking', style: TextStyle(color: secondaryColor)),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // Show a snackbar message
+  void _showSnackBar(String message, {Color color = Colors.black}) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    // This is just a sample build method to make the code compile
-    // The actual implementation would integrate with your existing UI
     return Scaffold(
       appBar: AppBar(
-        title: Text('Book at ${widget.location}'),
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: primaryColor),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          'Book a Room at ${widget.location}',
+          style: const TextStyle(color: primaryColor),
+        ),
       ),
-      body: Center(
-        child: Text('Fixed room availability checker implementation'),
+      body: _isLoadingRooms
+          ? const Center(child: CircularProgressIndicator(color: primaryColor))
+          : Stack(
+              children: [
+                SingleChildScrollView(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Campus information
+                      _buildCampusInfo(),
+                      
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      
+                      // Room type selection
+                      _buildRoomTypeSection(),
+                      
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      
+                      // Room selection
+                      _buildRoomSelection(),
+                      
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      
+                      // Date and time selection
+                      _buildDateTimeSelection(),
+                      
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      
+                      // Duration selection
+                      _buildDurationSelection(),
+                      
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      
+                      // Notes
+                      _buildNotesSection(),
+                      
+                      const SizedBox(height: 32),
+                      
+                      // Booking button
+                      _buildBookingButton(),
+                      
+                      const SizedBox(height: 40),
+                    ],
+                  ),
+                ),
+                
+                // Loading overlay
+                if (_isLoading)
+                  Container(
+                    color: Colors.black.withOpacity(0.3),
+                    child: const Center(
+                      child: CircularProgressIndicator(color: primaryColor),
+                    ),
+                  ),
+              ],
+            ),
+    );
+  }
+  
+  // Build campus information section
+  Widget _buildCampusInfo() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${widget.location} Campus',
+          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                color: primaryColor,
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Select your room preferences and booking time',
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: Colors.grey,
+              ),
+        ),
+      ],
+    );
+  }
+  
+  // Build room type selection section
+  Widget _buildRoomTypeSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Room Type',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: RoomType.values.map((type) {
+            final isSelected = _selectedRoomType == type;
+            return Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                child: GestureDetector(
+                  onTap: () => _filterRoomsByType(type),
+                  child: Card(
+                    elevation: isSelected ? 4 : 1,
+                    color: isSelected ? primaryColor.withAlpha(26) : null,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(
+                        color: isSelected ? primaryColor : Colors.grey.shade300,
+                        width: isSelected ? 2 : 1,
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        children: [
+                          Icon(
+                            type.icon,
+                            color: isSelected ? primaryColor : Colors.grey,
+                            size: 32,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            type.displayName,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: isSelected ? primaryColor : null,
+                              fontWeight: isSelected ? FontWeight.bold : null,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+  
+  // Build room selection section
+  Widget _buildRoomSelection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Select a Room',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 16),
+        
+        if (_availableRooms.isEmpty)
+          Center(
+            child: Column(
+              children: [
+                const Icon(Icons.meeting_room_outlined, size: 64, color: Colors.grey),
+                const SizedBox(height: 16),
+                Text(
+                  'No ${_selectedRoomType.displayName}s Available',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Please select a different room type or try another campus.',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          )
+        else
+          ...(_availableRooms.map((room) {
+            final isSelected = _selectedRoom?.id == room.id;
+            return Card(
+              margin: const EdgeInsets.only(bottom: 12),
+              elevation: isSelected ? 4 : 1,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: isSelected ? primaryColor : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+              child: InkWell(
+                onTap: () => _selectRoom(room),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: primaryColor.withAlpha(26),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              room.type.icon,
+                              color: primaryColor,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  room.name,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                if (room.location != null)
+                                  Text(
+                                    room.location!,
+                                    style: const TextStyle(
+                                      color: Colors.grey,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.people, size: 16),
+                                  const SizedBox(width: 4),
+                                  Text('Capacity: ${room.capacity}'),
+                                ],
+                              ),
+                              if (isSelected)
+                                const Chip(
+                                  label: Text('Selected'),
+                                  backgroundColor: primaryColor,
+                                  labelStyle: TextStyle(color: secondaryColor),
+                                  padding: EdgeInsets.symmetric(horizontal: 8),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      if (room.features.isNotEmpty) ...[
+                        const Text('Features:', style: TextStyle(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: room.features.map((feature) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    feature.icon,
+                                    size: 14,
+                                    color: Colors.grey.shade700,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    feature.displayName,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                      if (room.notes != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Notes: ${room.notes}',
+                          style: const TextStyle(fontStyle: FontStyle.italic),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          })),
+      ],
+    );
+  }
+  
+  // Build date and time selection section
+  Widget _buildDateTimeSelection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Select Date & Time',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              children: [
+                // Currently selected date/time display
+                if (formattedDateTime != null)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: primaryColor.withAlpha(26),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: primaryColor),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.event, color: primaryColor),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            formattedDateTime!,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: primaryColor,
+                            ),
+                          ),
+                        ),
+                        if (_selectedRoom != null) ...[
+                          if (_isRoomAvailable)
+                            const Chip(
+                              label: Text('Available'),
+                              backgroundColor: Colors.green,
+                              labelStyle: TextStyle(color: Colors.white),
+                            )
+                          else
+                            const Chip(
+                              label: Text('Unavailable'),
+                              backgroundColor: Colors.red,
+                              labelStyle: TextStyle(color: Colors.white),
+                            ),
+                        ],
+                      ],
+                    ),
+                  )
+                else
+                  const Text(
+                    'No date/time selected',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: () => _selectDateTime(context),
+                  icon: const Icon(Icons.calendar_today),
+                  label: Text(
+                    formattedDateTime == null
+                        ? 'Choose Date & Time'
+                        : 'Change Date & Time',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryColor,
+                    foregroundColor: secondaryColor,
+                    minimumSize: const Size(double.infinity, 50),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Operating Hours: 8:00 AM - 10:00 PM',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+  
+  // Build duration selection section
+  Widget _buildDurationSelection() {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Booking Duration',
+        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+      ),
+      const SizedBox(height: 16),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              Text(
+                '$_duration minutes',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 18,
+                ),
+              ),
+              const SizedBox(height: 16),
+              
+              // Duration selection buttons
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                alignment: WrapAlignment.center,
+                children: [
+                  _buildDurationButton(30, '30 min'),
+                  _buildDurationButton(60, '1 hour'),
+                  _buildDurationButton(90, '1.5 hours'),
+                  _buildDurationButton(120, '2 hours'),
+                  _buildDurationButton(180, '3 hours'),
+                  _buildDurationButton(240, '4 hours'),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+// Add this helper method for building duration buttons
+Widget _buildDurationButton(int minutes, String label) {
+  final isSelected = _duration == minutes;
+  
+  return ElevatedButton(
+    onPressed: () {
+      setState(() {
+        _duration = minutes;
+      });
+      
+      // Recheck availability with new duration
+      if (_selectedRoom != null && selectedDateTime != null) {
+        _checkRoomAvailability();
+      }
+    },
+    style: ElevatedButton.styleFrom(
+      backgroundColor: isSelected ? primaryColor : Colors.grey.shade200,
+      foregroundColor: isSelected ? secondaryColor : Colors.black87,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(
+          color: isSelected ? primaryColor : Colors.transparent,
+          width: 2,
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    ),
+    child: Text(label),
+  );
+}
+  
+  // Build notes section
+  Widget _buildNotesSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Additional Notes (Optional)',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: TextField(
+              controller: _notesController,
+              decoration: const InputDecoration(
+                hintText: 'Add any special requests or notes here...',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+  
+  // Build booking button
+  Widget _buildBookingButton() {
+    final isFormComplete = _selectedRoom != null && 
+                           selectedDateTime != null && 
+                           _isRoomAvailable;
+    
+    return ElevatedButton(
+      onPressed: isFormComplete ? _createBooking : null,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: primaryColor,
+        foregroundColor: secondaryColor,
+        minimumSize: const Size(double.infinity, 50),
+        disabledBackgroundColor: Colors.grey,
+        padding: const EdgeInsets.symmetric(vertical: 16),
+      ),
+      child: Text(
+        'Create Booking',
+        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+          color: secondaryColor,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
   }

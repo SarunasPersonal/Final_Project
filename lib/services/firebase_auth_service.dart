@@ -54,6 +54,7 @@ class FirebaseAuthService extends ChangeNotifier {
     });
   }
   
+  
   // Getter for current user
   User? get currentUser => _user;
   

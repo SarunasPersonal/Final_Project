@@ -3,25 +3,42 @@ import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/models/room_model.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter_ucs_app/admin/models/current_user.dart' as admin;
 import 'package:flutter_ucs_app/booking_model.dart';
 
 class MyBookingsPage extends StatefulWidget {
-  const MyBookingsPage({super.key});
+  const MyBookingsPage({Key? key}) : super(key: key);
 
   @override
   State<MyBookingsPage> createState() => _MyBookingsPageState();
 }
 
-class _MyBookingsPageState extends State<MyBookingsPage> {
+class _MyBookingsPageState extends State<MyBookingsPage> with SingleTickerProviderStateMixin {
   final BookingService _bookingService = BookingService();
-  List<Booking> userBookings = [];
-  bool _isLoading = true; // Add loading state
-
+  List<Booking> _userBookings = [];
+  List<Booking> _filteredBookings = [];
+  bool _isLoading = true;
+  String _searchQuery = '';
+  String _filterStatus = 'All';
+  
+  // Tab controller for upcoming/past bookings
+  late TabController _tabController;
+  
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     _loadUserBookings();
+    
+    // Listen for tab changes
+    _tabController.addListener(() {
+      _applyFilters();
+    });
+  }
+  
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   // Updated to use async Firebase calls
@@ -37,7 +54,8 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
         
         if (mounted) {
           setState(() {
-            userBookings = bookings;
+            _userBookings = bookings;
+            _applyFilters();
             _isLoading = false;
           });
         }
@@ -45,7 +63,8 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
         // Handle case where no user is logged in
         if (mounted) {
           setState(() {
-            userBookings = [];
+            _userBookings = [];
+            _filteredBookings = [];
             _isLoading = false;
           });
           
@@ -61,6 +80,53 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
         _showSnackBar('Error loading bookings: $e', color: Colors.red);
       }
     }
+  }
+
+  // Apply filters for search and status
+  void _applyFilters() {
+    if (!mounted) return;
+    
+    setState(() {
+      // Start with all bookings
+      var filtered = List<Booking>.from(_userBookings);
+      
+      // Filter by search query if not empty
+      if (_searchQuery.isNotEmpty) {
+        final query = _searchQuery.toLowerCase();
+        filtered = filtered.where((booking) => 
+          booking.location.toLowerCase().contains(query) ||
+          booking.roomType.displayName.toLowerCase().contains(query) ||
+          (booking.notes != null && booking.notes!.toLowerCase().contains(query))
+        ).toList();
+      }
+      
+      // Filter by status if not "All"
+      if (_filterStatus != 'All') {
+        filtered = filtered.where((booking) => 
+          booking.status.toLowerCase() == _filterStatus.toLowerCase()
+        ).toList();
+      }
+      
+      // Filter by upcoming/past based on tab
+      final now = DateTime.now();
+      if (_tabController.index == 0) { // Upcoming
+        filtered = filtered.where((booking) => 
+          booking.dateTime.isAfter(now) && booking.status != 'cancelled'
+        ).toList();
+        
+        // Sort by earliest first for upcoming
+        filtered.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+      } else { // Past or cancelled
+        filtered = filtered.where((booking) => 
+          booking.dateTime.isBefore(now) || booking.status == 'cancelled'
+        ).toList();
+        
+        // Sort by most recent first for past
+        filtered.sort((a, b) => b.dateTime.compareTo(a.dateTime));
+      }
+      
+      _filteredBookings = filtered;
+    });
   }
 
   // Format a DateTime object into a readable string
@@ -86,6 +152,15 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
 
   // Show a confirmation dialog and delete a booking if confirmed
   void _deleteBooking(Booking booking) {
+    // Don't allow deleting past bookings or completed bookings
+    if (booking.dateTime.isBefore(DateTime.now()) || 
+        booking.status == 'completed' ||
+        booking.status == 'cancelled') {
+      _showSnackBar('Cannot delete past, completed or cancelled bookings', 
+          color: Colors.red);
+      return;
+    }
+    
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -106,18 +181,17 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
                 setState(() => _isLoading = true);
                 
                 try {
-                  // Updated to use async Firebase delete
-                  bool success = await _bookingService.deleteBooking(
-                    booking.location, 
-                    booking.dateTime, 
-                    booking.roomType
+                  // Update status to cancelled
+                  bool success = await _bookingService.updateBookingStatus(
+                    booking.id, 
+                    'cancelled'
                   );
                   
                   if (mounted) {
                     if (success) {
                       _showSnackBar('Booking cancelled successfully', 
                           color: Colors.green);
-                      // Reload bookings after deletion
+                      // Reload bookings after cancellation
                       await _loadUserBookings();
                     } else {
                       _showSnackBar('Failed to cancel booking', 
@@ -138,6 +212,133 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
         );
       },
     );
+  }
+  
+  // Show booking details dialog
+  void _showBookingDetails(Booking booking) {
+    final formattedDateTime = _formatDateTime(booking.dateTime);
+    final endTime = booking.dateTime.add(Duration(minutes: booking.duration));
+    final formattedEndTime = DateFormat('h:mm a').format(endTime);
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              _getIconForLocation(booking.location),
+              color: primaryColor,
+              size: 24,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text('Booking Details',
+                style: TextStyle(color: primaryColor),
+              ),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildDetailRow('Location', booking.location),
+              _buildDetailRow('Room Type', booking.roomType.displayName),
+              _buildDetailRow('Date & Time', formattedDateTime),
+              _buildDetailRow('End Time', formattedEndTime),
+              _buildDetailRow('Duration', '${booking.duration} minutes'),
+              _buildDetailRow('Status', _getStatusText(booking.status)),
+              if (booking.notes != null && booking.notes!.isNotEmpty)
+                _buildDetailRow('Notes', booking.notes!),
+              if (booking.features.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                const Text('Room Features:', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: booking.features.map((feature) {
+                    return Chip(
+                      label: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(feature.icon, size: 16),
+                          const SizedBox(width: 4),
+                          Text(feature.displayName),
+                        ],
+                      ),
+                      backgroundColor: Colors.grey.shade100,
+                    );
+                  }).toList(),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+          if (booking.dateTime.isAfter(DateTime.now()) && 
+              booking.status != 'cancelled' &&
+              booking.status != 'completed')
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                _deleteBooking(booking);
+              },
+              child: const Text('Cancel Booking', style: TextStyle(color: Colors.red)),
+            ),
+        ],
+      ),
+    );
+  }
+  
+  // Helper method for building detail rows in the dialog
+  Widget _buildDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              '$label:',
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(value),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // Get formatted status with color coding
+  String _getStatusText(String status) {
+    return status.substring(0, 1).toUpperCase() + status.substring(1);
+  }
+  
+  // Get color for status
+  Color _getStatusColor(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending':
+        return Colors.orange;
+      case 'confirmed':
+        return Colors.green;
+      case 'cancelled':
+        return Colors.red;
+      case 'completed':
+        return Colors.blue;
+      default:
+        return Colors.grey;
+    }
   }
   
   // Show a snackbar message
@@ -165,6 +366,15 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
           'My Bookings',
           style: TextStyle(color: primaryColor),
         ),
+        bottom: TabBar(
+          controller: _tabController,
+          labelColor: primaryColor,
+          indicatorColor: primaryColor,
+          tabs: const [
+            Tab(text: 'Upcoming'),
+            Tab(text: 'Past & Cancelled'),
+          ],
+        ),
         actions: [
           // Add a refresh button
           IconButton(
@@ -176,11 +386,81 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: primaryColor))
-          : Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: userBookings.isEmpty
-                  ? _buildEmptyState() // Show empty state if no bookings
-                  : _buildBookingsList(), // Show bookings list otherwise
+          : Column(
+              children: [
+                // Search and filter bar
+                Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      // Search field
+                      Expanded(
+                        child: TextField(
+                          decoration: const InputDecoration(
+                            hintText: 'Search bookings...',
+                            prefixIcon: Icon(Icons.search),
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: (value) {
+                            setState(() {
+                              _searchQuery = value;
+                            });
+                            _applyFilters();
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      
+                      // Status filter
+                      DropdownButton<String>(
+                        value: _filterStatus,
+                        hint: const Text('Status'),
+                        underline: Container(
+                          height: 2,
+                          color: primaryColor,
+                        ),
+                        onChanged: (String? newValue) {
+                          if (newValue != null) {
+                            setState(() {
+                              _filterStatus = newValue;
+                            });
+                            _applyFilters();
+                          }
+                        },
+                        items: <String>['All', 'Pending', 'Confirmed', 'Cancelled', 'Completed']
+                            .map<DropdownMenuItem<String>>((String value) {
+                          return DropdownMenuItem<String>(
+                            value: value,
+                            child: Text(value),
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                ),
+                
+                // Tab content
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      // Upcoming bookings tab
+                      _userBookings.isEmpty
+                          ? _buildEmptyState()
+                          : _filteredBookings.isEmpty
+                              ? _buildNoResultsState()
+                              : _buildBookingsList(),
+                              
+                      // Past bookings tab
+                      _userBookings.isEmpty
+                          ? _buildEmptyState()
+                          : _filteredBookings.isEmpty
+                              ? _buildNoResultsState()
+                              : _buildBookingsList(),
+                    ],
+                  ),
+                ),
+              ],
             ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: primaryColor,
@@ -235,31 +515,68 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
       ),
     );
   }
+  
+  // Build the UI for no search results
+  Widget _buildNoResultsState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(
+            Icons.search_off,
+            size: 80,
+            color: Colors.grey,
+          ),
+          const SizedBox(height: 20),
+          const Text(
+            'No matching bookings',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: primaryColor,
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            'Try adjusting your search or filters',
+            style: TextStyle(
+              fontSize: 16,
+              color: Colors.grey,
+            ),
+          ),
+          const SizedBox(height: 30),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: primaryColor,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            ),
+            onPressed: () {
+              setState(() {
+                _searchQuery = '';
+                _filterStatus = 'All';
+              });
+              _applyFilters();
+            },
+            child: const Text(
+              'Clear Filters',
+              style: TextStyle(color: secondaryColor),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   // Build the list of bookings
   Widget _buildBookingsList() {
-    // Sort bookings with upcoming first, then by date
-    final now = DateTime.now();
-    userBookings.sort((a, b) {
-      // Sort by upcoming/past first
-      bool aIsUpcoming = a.dateTime.isAfter(now);
-      bool bIsUpcoming = b.dateTime.isAfter(now);
-      
-      if (aIsUpcoming && !bIsUpcoming) return -1;
-      if (!aIsUpcoming && bIsUpcoming) return 1;
-      
-      // Then sort by date (most recent first for upcoming, oldest first for past)
-      return aIsUpcoming 
-          ? a.dateTime.compareTo(b.dateTime)  // Ascending for upcoming
-          : b.dateTime.compareTo(a.dateTime); // Descending for past
-    });
-  
     return ListView.builder(
-      itemCount: userBookings.length,
+      padding: const EdgeInsets.all(16),
+      itemCount: _filteredBookings.length,
       itemBuilder: (context, index) {
-        final booking = userBookings[index];
+        final booking = _filteredBookings[index];
         final formattedDateTime = _formatDateTime(booking.dateTime);
         final isUpcoming = booking.dateTime.isAfter(DateTime.now());
+        final statusColor = _getStatusColor(booking.status);
 
         return Card(
           margin: const EdgeInsets.only(bottom: 16),
@@ -267,41 +584,57 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
             side: BorderSide(
-              color: isUpcoming
-                  ? primaryColor.withAlpha(77)
-                  : Colors.grey.withAlpha(77),
+              color: booking.status == 'cancelled'
+                  ? Colors.red.withAlpha(77)
+                  : isUpcoming
+                      ? primaryColor.withAlpha(77)
+                      : Colors.grey.withAlpha(77),
               width: 1,
             ),
           ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    _buildLocationIcon(
-                        booking.location, isUpcoming), // Location icon
-                    const SizedBox(width: 16),
-                    _buildBookingDetails(booking, formattedDateTime,
-                        isUpcoming), // Booking details
-                    if (isUpcoming)
-                      IconButton(
-                        icon:
-                            const Icon(Icons.delete_outline, color: Colors.red),
-                        onPressed: () =>
-                            _deleteBooking(booking), // Delete booking
+          child: InkWell(
+            onTap: () => _showBookingDetails(booking),
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      _buildLocationIcon(booking.location, booking.status, isUpcoming),
+                      const SizedBox(width: 16),
+                      _buildBookingDetails(booking, formattedDateTime),
+                      if (booking.status != 'cancelled' && booking.status != 'completed' && isUpcoming)
+                        IconButton(
+                          icon: const Icon(Icons.cancel_outlined, color: Colors.red),
+                          onPressed: () => _deleteBooking(booking),
+                          tooltip: 'Cancel Booking',
+                        ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 16),
+                  
+                  // Status banner
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    decoration: BoxDecoration(
+                      color: statusColor.withAlpha(26),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _getStatusText(booking.status),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: statusColor,
                       ),
-                  ],
-                ),
-
-                // Show room features if any exist
-                if (booking.features.isNotEmpty)
-                  _buildFeaturesList(booking.features, isUpcoming),
-
-                const SizedBox(height: 16),
-                _buildStatusBanner(isUpcoming), // Status banner
-              ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -310,25 +643,31 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
   }
 
   // Build the location icon widget
-  Widget _buildLocationIcon(String location, bool isUpcoming) {
+  Widget _buildLocationIcon(String location, String status, bool isUpcoming) {
+    final Color iconColor = status == 'cancelled'
+        ? Colors.red
+        : status == 'completed'
+            ? Colors.blue
+            : isUpcoming 
+                ? primaryColor 
+                : Colors.grey;
+    
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color:
-            isUpcoming ? primaryColor.withAlpha(26) : Colors.grey.withAlpha(26),
+        color: iconColor.withAlpha(26),
         borderRadius: BorderRadius.circular(10),
       ),
       child: Icon(
         _getIconForLocation(location),
-        color: isUpcoming ? primaryColor : Colors.grey,
+        color: iconColor,
         size: 30,
       ),
     );
   }
 
   // Build the booking details widget
-  Widget _buildBookingDetails(
-      Booking booking, String formattedDateTime, bool isUpcoming) {
+  Widget _buildBookingDetails(Booking booking, String formattedDateTime) {
     return Expanded(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -338,7 +677,11 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.bold,
-              color: isUpcoming ? primaryColor : Colors.grey,
+              color: booking.status == 'cancelled'
+                  ? Colors.red
+                  : booking.status == 'completed'
+                      ? Colors.blue
+                      : primaryColor,
             ),
           ),
           const SizedBox(height: 4),
@@ -347,14 +690,14 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
               Icon(
                 booking.roomType.icon,
                 size: 16,
-                color: isUpcoming ? primaryColor : Colors.grey,
+                color: booking.status == 'cancelled' ? Colors.grey : primaryColor,
               ),
               const SizedBox(width: 4),
               Text(
                 booking.roomType.displayName,
                 style: TextStyle(
                   fontSize: 14,
-                  color: isUpcoming ? Colors.black87 : Colors.grey,
+                  color: booking.status == 'cancelled' ? Colors.grey : Colors.black87,
                 ),
               ),
             ],
@@ -364,7 +707,7 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
             formattedDateTime,
             style: TextStyle(
               fontSize: 14,
-              color: isUpcoming ? Colors.black87 : Colors.grey,
+              color: booking.status == 'cancelled' ? Colors.grey : Colors.black87,
             ),
           ),
           // Add duration info
@@ -374,68 +717,11 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
               'Duration: ${booking.duration} minutes',
               style: TextStyle(
                 fontSize: 14,
-                color: isUpcoming ? Colors.black87 : Colors.grey,
+                color: booking.status == 'cancelled' ? Colors.grey : Colors.black87,
               ),
             ),
           ],
         ],
-      ),
-    );
-  }
-
-  // Build the list of room features
-  Widget _buildFeaturesList(List<RoomFeature> features, bool isUpcoming) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: features.map((feature) {
-        return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: isUpcoming ? Colors.blue.shade50 : Colors.grey.shade200,
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                feature.icon,
-                size: 16,
-                color: isUpcoming ? Colors.blue.shade700 : Colors.grey.shade700,
-              ),
-              const SizedBox(width: 4),
-              Text(
-                feature.displayName,
-                style: TextStyle(
-                  fontSize: 12,
-                  color:
-                      isUpcoming ? Colors.blue.shade700 : Colors.grey.shade700,
-                ),
-              ),
-            ],
-          ),
-        );
-      }).toList(),
-    );
-  }
-
-  // Build the status banner widget
-  Widget _buildStatusBanner(bool isUpcoming) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      decoration: BoxDecoration(
-        color:
-            isUpcoming ? primaryColor.withAlpha(26) : Colors.grey.withAlpha(26),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        isUpcoming ? 'Upcoming Booking' : 'Past Booking',
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          fontWeight: FontWeight.bold,
-          color: isUpcoming ? primaryColor : Colors.grey,
-        ),
       ),
     );
   }

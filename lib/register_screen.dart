@@ -1,10 +1,13 @@
+// Modified RegisterScreen with Name and Surname fields
 // lib/register_screen.dart
+
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/home_page.dart';
 import 'package:flutter_ucs_app/services/firebase_auth_service.dart';
 import 'package:provider/provider.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -14,11 +17,12 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  // Controllers for text fields
+  // Controllers for text fields - added name and surname
+  final nameController = TextEditingController();
+  final surnameController = TextEditingController();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   final confirmPasswordController = TextEditingController();
-  final nameController = TextEditingController(); // Added for user's name
   
   // Loading and error state
   bool _isLoading = false;
@@ -27,10 +31,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void dispose() {
     // Clean up controllers when the widget is removed
+    nameController.dispose();
+    surnameController.dispose();
     emailController.dispose();
     passwordController.dispose();
     confirmPasswordController.dispose();
-    nameController.dispose(); // Dispose name controller
     super.dispose();
   }
   
@@ -55,7 +60,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
 
     // Validate inputs
-    if (emailController.text.isEmpty ||
+    if (nameController.text.isEmpty ||
+        surnameController.text.isEmpty ||
+        emailController.text.isEmpty ||
         passwordController.text.isEmpty ||
         confirmPasswordController.text.isEmpty) {
       setState(() {
@@ -93,7 +100,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // Get Firebase Auth service from provider
       final authService = Provider.of<FirebaseAuthService>(context, listen: false);
       
-      // Register the user
+      // Register the user with email and password
       final user = await authService.registerWithEmailPassword(
         emailController.text.trim(),
         passwordController.text,
@@ -102,6 +109,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (!mounted) return;
       
       if (user != null) {
+        // Save additional user data to Firestore
+        await _saveUserDataToFirestore(user.uid);
+        
         // Registration successful
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -152,6 +162,40 @@ class _RegisterScreenState extends State<RegisterScreen> {
         });
       }
     }
+  }
+  
+  // Save user data to Firestore
+  Future<void> _saveUserDataToFirestore(String uid) async {
+    try {
+      // Format the full name properly with proper capitalization
+      final firstName = _capitalizeFirstLetter(nameController.text.trim());
+      final lastName = _capitalizeFirstLetter(surnameController.text.trim());
+      final fullName = '$firstName $lastName';
+      
+      // Create a document for the user in the 'users' collection
+      await FirebaseFirestore.instance.collection('users').doc(uid).set({
+        'uid': uid,
+        'firstName': firstName,
+        'lastName': lastName,
+        'fullName': fullName,
+        'email': emailController.text.trim(),
+        'createdAt': FieldValue.serverTimestamp(),
+        'lastLogin': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('Error saving user data to Firestore: $e');
+      // This won't interrupt the registration flow, but logs the error
+    }
+  }
+  
+  // Helper method to capitalize first letter of each word
+  String _capitalizeFirstLetter(String text) {
+    if (text.isEmpty) return '';
+    return text.split(' ')
+        .map((word) => word.isNotEmpty 
+            ? word[0].toUpperCase() + word.substring(1).toLowerCase() 
+            : '')
+        .join(' ');
   }
 
   @override
@@ -214,6 +258,34 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         style: TextStyle(color: Colors.red.shade800),
                       ),
                     ),
+                  
+                  // Name input field (new)
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'First Name',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.person, color: primaryColor),
+                    ),
+                    keyboardType: TextInputType.name,
+                    textCapitalization: TextCapitalization.words,
+                    enabled: !_isLoading,
+                  ),
+                  const SizedBox(height: 20),
+                  
+                  // Surname input field (new)
+                  TextField(
+                    controller: surnameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Last Name',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.person, color: primaryColor),
+                    ),
+                    keyboardType: TextInputType.name,
+                    textCapitalization: TextCapitalization.words,
+                    enabled: !_isLoading,
+                  ),
+                  const SizedBox(height: 20),
                   
                   // Email input field
                   TextField(
