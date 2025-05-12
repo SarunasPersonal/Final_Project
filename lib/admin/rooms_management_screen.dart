@@ -176,32 +176,36 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
     
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Add New Room'),
-        content: SingleChildScrollView(
-          child: _buildRoomForm(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
+      builder: (context) => StatefulBuilder(
+        builder: (context, dialogSetState) {
+          return AlertDialog(
+            title: Text('Add New Room'),
+            content: SingleChildScrollView(
+              child: _buildRoomForm(dialogSetState),
             ),
-            onPressed: () {
-              if (_validateForm()) {
-                Navigator.pop(context);
-                _addRoom();
-              }
-            },
-            child: Text(
-              'Add Room',
-              style: TextStyle(color: secondaryColor),
-            ),
-          ),
-        ],
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text('Cancel'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryColor,
+                ),
+                onPressed: () {
+                  if (_validateForm()) {
+                    Navigator.pop(context);
+                    _addRoom();
+                  }
+                },
+                child: Text(
+                  'Add Room',
+                  style: TextStyle(color: secondaryColor),
+                ),
+              ),
+            ],
+          );
+        }
       ),
     );
   }
@@ -226,37 +230,41 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
     
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Edit Room'),
-        content: SingleChildScrollView(
-          child: _buildRoomForm(),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Cancel'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: primaryColor,
+      builder: (context) => StatefulBuilder(
+        builder: (context, dialogSetState) {
+          return AlertDialog(
+            title: Text('Edit Room'),
+            content: SingleChildScrollView(
+              child: _buildRoomForm(dialogSetState),
             ),
-            onPressed: () {
-              if (_validateForm()) {
-                Navigator.pop(context);
-                _updateRoom(room.id);
-              }
-            },
-            child: Text(
-              'Update Room',
-              style: TextStyle(color: secondaryColor),
-            ),
-          ),
-        ],
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text('Cancel'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: primaryColor,
+                ),
+                onPressed: () {
+                  if (_validateForm()) {
+                    Navigator.pop(context);
+                    _updateRoom(room.id);
+                  }
+                },
+                child: Text(
+                  'Update Room',
+                  style: TextStyle(color: secondaryColor),
+                ),
+              ),
+            ],
+          );
+        }
       ),
     );
   }
   
-  Widget _buildRoomForm() {
+  Widget _buildRoomForm(StateSetter dialogSetState) {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -285,7 +293,7 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
             );
           }).toList(),
           onChanged: (value) {
-            setState(() {
+            dialogSetState(() {
               _selectedCampus = value!;
             });
           },
@@ -312,7 +320,7 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
             );
           }).toList(),
           onChanged: (value) {
-            setState(() {
+            dialogSetState(() {
               _selectedRoomType = value!;
             });
           },
@@ -323,7 +331,7 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
         TextField(
           controller: _capacityController,
           decoration: InputDecoration(
-            labelText: 'Capacity',
+            labelText: 'Spaces',
             border: OutlineInputBorder(),
           ),
           keyboardType: TextInputType.number,
@@ -356,7 +364,7 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
           title: Text('Available for Booking'),
           value: _isAvailable,
           onChanged: (value) {
-            setState(() {
+            dialogSetState(() {
               _isAvailable = value;
             });
           },
@@ -386,7 +394,7 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
           ),
           value: _selectedFeatures[feature],
           onChanged: (value) {
-            setState(() {
+            dialogSetState(() {
               _selectedFeatures[feature] = value!;
             });
           },
@@ -406,7 +414,7 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
     int? capacity = int.tryParse(_capacityController.text);
     if (capacity == null || capacity < 1) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Please enter a valid capacity (minimum 1)')),
+        SnackBar(content: Text('Please enter a valid number of spaces (minimum 1)')),
       );
       return false;
     }
@@ -676,13 +684,9 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
           size: ColumnSize.S,
         ),
         DataColumn2(
-          label: Text('Capacity'),
+          label: Text('Spaces'),
           size: ColumnSize.S,
           numeric: true,
-        ),
-        DataColumn2(
-          label: Text('Location'),
-          size: ColumnSize.L,
         ),
         DataColumn2(
           label: Text('Status'),
@@ -709,7 +713,6 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
               ),
             ),
             DataCell(Text(room.capacity.toString())),
-            DataCell(Text(room.location ?? 'N/A')),
             DataCell(
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -854,7 +857,7 @@ class _RoomsManagementScreenState extends State<RoomsManagementScreen> with Sing
                   ),
                   Expanded(
                     child: _buildCapacityInfoItem(
-                      'Total Capacity',
+                      'Total Spaces',
                       totalCapacity.toString(),
                       Icons.people,
                     ),

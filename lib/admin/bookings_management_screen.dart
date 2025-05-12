@@ -1,4 +1,3 @@
-// lib/admin/bookings_management_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/models/room_model.dart';
@@ -24,6 +23,34 @@ enum BookingStatus {
         return 'Completed';
     }
   }
+
+  Color get color {
+    switch (this) {
+      case BookingStatus.pending:
+        return Colors.orange;
+      case BookingStatus.confirmed:
+        return Colors.green;
+      case BookingStatus.cancelled:
+        return Colors.red;
+      case BookingStatus.completed:
+        return Colors.blue;
+    }
+  }
+
+  static BookingStatus fromString(String status) {
+    switch (status.toLowerCase()) {
+      case 'pending':
+        return BookingStatus.pending;
+      case 'confirmed':
+        return BookingStatus.confirmed;
+      case 'cancelled':
+        return BookingStatus.cancelled;
+      case 'completed':
+        return BookingStatus.completed;
+      default:
+        return BookingStatus.pending;
+    }
+  }
 }
 
 class Booking {
@@ -47,131 +74,280 @@ class Booking {
     this.status = BookingStatus.pending,
   });
 
-  Map<String, dynamic> toJson() {
+  // Get end time
+  DateTime get endTime => dateTime.add(Duration(minutes: duration));
+  
+  // Check if booking is upcoming
+  bool get isUpcoming => dateTime.isAfter(DateTime.now());
+
+  // Create a Booking from a Firestore document
+  factory Booking.fromFirestore(DocumentSnapshot doc) {
+    final data = doc.data() as Map<String, dynamic>? ?? {};
+    
+    return Booking(
+      id: doc.id,
+      userId: data['userId'] ?? 'Unknown',
+      location: data['location'] ?? 'Unknown',
+      roomType: _parseRoomType(data['roomType']),
+      dateTime: _parseDateTime(data['dateTime']),
+      duration: data['duration'] ?? 60,
+      notes: data['notes'],
+      status: _parseStatus(data['status']),
+    );
+  }
+
+  // Helper method to parse room type from string
+  static RoomType _parseRoomType(String? type) {
+    if (type == null) return RoomType.studyRoom;
+    
+    switch (type) {
+      case 'quietRoom': return RoomType.quietRoom;
+      case 'conferenceRoom': return RoomType.conferenceRoom;
+      case 'studyRoom': return RoomType.studyRoom;
+      default: return RoomType.studyRoom;
+    }
+  }
+
+  // Helper method to parse dateTime from Firestore
+  static DateTime _parseDateTime(dynamic timestamp) {
+    if (timestamp is Timestamp) {
+      return timestamp.toDate();
+    } else if (timestamp is String) {
+      try {
+        return DateTime.parse(timestamp);
+      } catch (e) {
+        return DateTime.now();
+      }
+    }
+    return DateTime.now();
+  }
+
+  // Helper method to parse status from string
+  static BookingStatus _parseStatus(String? status) {
+    if (status == null) return BookingStatus.pending;
+    return BookingStatus.fromString(status);
+  }
+
+  // Convert booking to a map for Firestore
+  Map<String, dynamic> toFirestore() {
+    String roomTypeString;
+    switch (roomType) {
+      case RoomType.quietRoom:
+        roomTypeString = 'quietRoom';
+        break;
+      case RoomType.conferenceRoom:
+        roomTypeString = 'conferenceRoom';
+        break;
+      case RoomType.studyRoom:
+        roomTypeString = 'studyRoom';
+        break;
+    }
+
     return {
-      'id': id,
       'userId': userId,
       'location': location,
-      'roomType': roomType.name,
-      'dateTime': dateTime.toIso8601String(),
+      'roomType': roomTypeString,
+      'dateTime': Timestamp.fromDate(dateTime),
       'duration': duration,
       'notes': notes,
       'status': status.name,
+      'updatedAt': FieldValue.serverTimestamp(),
     };
-  }
-
-  factory Booking.fromJson(Map<String, dynamic> json) {
-    return Booking(
-      id: json['id'] as String,
-      userId: json['userId'] as String,
-      location: json['location'] as String,
-      roomType: RoomType.values.firstWhere(
-        (e) => e.name == json['roomType'],
-        orElse: () => RoomType.studyRoom,
-      ),
-      dateTime: DateTime.parse(json['dateTime'] as String),
-      duration: json['duration'] as int,
-      notes: json['notes'] as String?,
-      status: BookingStatus.values.firstWhere(
-        (e) => e.name == json['status'],
-        orElse: () => BookingStatus.pending,
-      ),
-    );
   }
 }
 
 class BookingService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final Logger _logger = Logger('BookingService');
+  final String _collectionName = 'bookings';
 
   // Get all bookings from Firestore
   Future<List<Booking>> getAllBookings() async {
     try {
+      // Check if collection exists and create sample data if not
+      bool collectionExists = await _checkCollectionExists();
+      if (!collectionExists) {
+        await _createSampleBookings();
+      }
+      
       // Get bookings from Firestore, ordered by date/time descending
       final QuerySnapshot snapshot = await _firestore
-          .collection('bookings')
+          .collection(_collectionName)
           .orderBy('dateTime', descending: true)
           .get();
       
       // Convert documents to Booking objects
-      return snapshot.docs.map((doc) {
-        final data = doc.data() as Map<String, dynamic>;
-        // Ensure the document ID is included
-        data['id'] = doc.id;
-        return Booking.fromJson(data);
-      }).toList();
+      final bookings = snapshot.docs.map((doc) => Booking.fromFirestore(doc)).toList();
+      
+      if (bookings.isEmpty) {
+        // If still empty, create sample bookings
+        await _createSampleBookings();
+        
+        // Try fetching again
+        final retrySnapshot = await _firestore
+            .collection(_collectionName)
+            .orderBy('dateTime', descending: true)
+            .get();
+            
+        return retrySnapshot.docs.map((doc) => Booking.fromFirestore(doc)).toList();
+      }
+      
+      return bookings;
     } catch (e) {
       _logger.warning('Error fetching bookings: $e');
-      // If there's an error, return mock data for development purposes
-      return [
-        Booking(
-          id: '1',
-          userId: 'user123',
-          location: 'Taunton',
-          roomType: RoomType.quietRoom,
-          dateTime: DateTime.now().add(const Duration(days: 1)),
-          duration: 60,
-          notes: 'Quiet study session',
-        ),
-        Booking(
-          id: '2',
-          userId: 'user456',
-          location: 'Bridgwater',
-          roomType: RoomType.conferenceRoom,
-          dateTime: DateTime.now().add(const Duration(days: 2)),
-          duration: 120,
-          notes: 'Team meeting',
-        ),
-      ];
+      
+      // If Firestore query fails, return mock data
+      return _getMockBookings();
     }
   }
 
-  // Delete a booking by its criteria
-  Future<void> deleteBooking(String location, DateTime dateTime, RoomType roomType) async {
+  // Check if the bookings collection exists
+  Future<bool> _checkCollectionExists() async {
     try {
-      // Convert RoomType to string for comparison
-      String roomTypeStr;
-      switch (roomType) {
-        case RoomType.quietRoom:
-          roomTypeStr = 'quietRoom';
-          break;
-        case RoomType.conferenceRoom:
-          roomTypeStr = 'conferenceRoom';
-          break;
-        case RoomType.studyRoom:
-          roomTypeStr = 'studyRoom';
-          break;
-      }
-      
-      // Find bookings matching the criteria
-      final QuerySnapshot snapshot = await _firestore
-          .collection('bookings')
-          .where('location', isEqualTo: location)
-          .where('roomType', isEqualTo: roomTypeStr)
-          .get();
-      
-      // Filter by date (Firestore can't directly compare DateTime)
-      final targetDate = DateFormat('yyyy-MM-dd').format(dateTime);
-      
-      // Find the document that matches the date
-      for (var doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>;
-        final docDate = DateFormat('yyyy-MM-dd').format(
-          DateTime.parse(data['dateTime'] as String)
-        );
-        
-        if (docDate == targetDate) {
-          // Delete the booking
-          await _firestore.collection('bookings').doc(doc.id).delete();
-          _logger.info('Deleted booking: $location, $dateTime, $roomType');
-          break;
-        }
-      }
+      final snapshot = await _firestore.collection(_collectionName).limit(1).get();
+      return snapshot.docs.isNotEmpty;
+    } catch (e) {
+      _logger.warning('Error checking if collection exists: $e');
+      return false;
+    }
+  }
+
+  // Delete a booking from Firestore
+  Future<bool> deleteBooking(String bookingId) async {
+    try {
+      await _firestore.collection(_collectionName).doc(bookingId).delete();
+      _logger.info('Deleted booking: $bookingId');
+      return true;
     } catch (e) {
       _logger.warning('Error deleting booking: $e');
-      // Rethrow to handle in UI
-      rethrow;
+      return false;
     }
+  }
+
+  // Update booking status
+  Future<bool> updateBookingStatus(String bookingId, BookingStatus status) async {
+    try {
+      await _firestore.collection(_collectionName).doc(bookingId).update({
+        'status': status.name,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      _logger.info('Updated booking status: $bookingId to ${status.name}');
+      return true;
+    } catch (e) {
+      _logger.warning('Error updating booking status: $e');
+      return false;
+    }
+  }
+  
+  // Create sample bookings in Firestore for testing
+  Future<void> _createSampleBookings() async {
+    try {
+      _logger.info('Creating sample bookings...');
+      
+      // Sample room data
+      final rooms = [
+        {'id': 'taunton-quiet-1', 'name': 'Quiet Study Room 1', 'campus': 'Taunton', 'type': RoomType.quietRoom},
+        {'id': 'bridgwater-conference-1', 'name': 'Conference Room A', 'campus': 'Bridgwater', 'type': RoomType.conferenceRoom},
+        {'id': 'cannington-study-1', 'name': 'Study Room 1', 'campus': 'Cannington', 'type': RoomType.studyRoom},
+      ];
+      
+      // Sample users
+      final users = [
+        {'id': 'user1', 'email': 'john.smith@example.com'},
+        {'id': 'user2', 'email': 'jane.doe@example.com'},
+        {'id': 'user3', 'email': 'mike.wilson@example.com'},
+      ];
+      
+      // Get sample bookings
+      final sampleBookings = _getMockBookings();
+      
+      // Add to Firestore
+      final batch = _firestore.batch();
+      
+      for (int i = 0; i < sampleBookings.length; i++) {
+        final booking = sampleBookings[i];
+        final docRef = _firestore.collection(_collectionName).doc('sample-booking-${i+1}');
+        
+        // Create Firestore data
+        final Map<String, dynamic> bookingData = {
+          'userId': booking.userId,
+          'location': booking.location,
+          'roomType': booking.roomType == RoomType.quietRoom 
+              ? 'quietRoom' 
+              : booking.roomType == RoomType.conferenceRoom 
+                  ? 'conferenceRoom' 
+                  : 'studyRoom',
+          'dateTime': Timestamp.fromDate(booking.dateTime),
+          'duration': booking.duration,
+          'notes': booking.notes,
+          'status': booking.status.name,
+          'createdAt': FieldValue.serverTimestamp(),
+        };
+        
+        batch.set(docRef, bookingData);
+      }
+      
+      await batch.commit();
+      _logger.info('Sample bookings created successfully');
+    } catch (e) {
+      _logger.warning('Error creating sample bookings: $e');
+    }
+  }
+  
+  // Get mock bookings for development
+  List<Booking> _getMockBookings() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    
+    return [
+      Booking(
+        id: '1',
+        userId: 'john.smith@example.com',
+        location: 'Taunton',
+        roomType: RoomType.quietRoom,
+        dateTime: today.add(const Duration(days: 1, hours: 10)),
+        duration: 60,
+        notes: 'Quiet study session',
+      ),
+      Booking(
+        id: '2',
+        userId: 'jane.doe@example.com',
+        location: 'Bridgwater',
+        roomType: RoomType.conferenceRoom,
+        dateTime: today.add(const Duration(days: 2, hours: 14)),
+        duration: 120,
+        notes: 'Team meeting',
+        status: BookingStatus.confirmed,
+      ),
+      Booking(
+        id: '3',
+        userId: 'mike.wilson@example.com',
+        location: 'Cannington',
+        roomType: RoomType.studyRoom,
+        dateTime: today.subtract(const Duration(days: 1, hours: 9)),
+        duration: 90,
+        status: BookingStatus.completed,
+      ),
+      Booking(
+        id: '4',
+        userId: 'sarah.johnson@example.com',
+        location: 'Bridgwater',
+        roomType: RoomType.quietRoom,
+        dateTime: today.add(const Duration(days: 3, hours: 15, minutes: 30)),
+        duration: 60,
+        status: BookingStatus.pending,
+      ),
+      Booking(
+        id: '5',
+        userId: 'david.brown@example.com',
+        location: 'Taunton',
+        roomType: RoomType.conferenceRoom,
+        dateTime: today.add(const Duration(days: 1, hours: 13)),
+        duration: 180,
+        notes: 'Presentation preparation',
+        status: BookingStatus.cancelled,
+      ),
+    ];
   }
 }
 
@@ -179,18 +355,18 @@ class BookingsManagementScreen extends StatefulWidget {
   const BookingsManagementScreen({super.key});
 
   @override
-  State<BookingsManagementScreen> createState() =>
-      _BookingsManagementScreenState();
+  State<BookingsManagementScreen> createState() => _BookingsManagementScreenState();
 }
 
 class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
   final BookingService _bookingService = BookingService();
   final Logger _logger = Logger('BookingsManagementScreen');
+  List<Booking> _bookings = [];
   List<Booking> _filteredBookings = [];
-  List<Booking> _allBookings = [];
   String _searchQuery = '';
   String _filterLocation = 'All Locations';
   RoomType? _filterRoomType;
+  BookingStatus? _filterStatus;
   bool _isLoading = true;
 
   @override
@@ -200,6 +376,8 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
   }
 
   Future<void> _loadBookings() async {
+    if (!mounted) return;
+    
     setState(() {
       _isLoading = true;
     });
@@ -207,31 +385,31 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
     try {
       final allBookings = await _bookingService.getAllBookings();
       
-      if (mounted) {
-        setState(() {
-          _allBookings = allBookings;
-          _applyFilters();
-          _isLoading = false;
-        });
-      }
+      if (!mounted) return;
+      
+      setState(() {
+        _bookings = allBookings;
+        _applyFilters();
+        _isLoading = false;
+      });
     } catch (e) {
       _logger.warning('Error loading bookings: $e');
       
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading bookings: $e')),
-        );
-      }
+      if (!mounted) return;
+      
+      setState(() {
+        _isLoading = false;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error loading bookings: $e')),
+      );
     }
   }
 
   void _applyFilters() {
     setState(() {
-      _filteredBookings = _allBookings.where((booking) {
+      _filteredBookings = _bookings.where((booking) {
         // Apply location filter
         if (_filterLocation != 'All Locations' &&
             booking.location != _filterLocation) {
@@ -240,6 +418,11 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
 
         // Apply room type filter
         if (_filterRoomType != null && booking.roomType != _filterRoomType) {
+          return false;
+        }
+        
+        // Apply status filter
+        if (_filterStatus != null && booking.status != _filterStatus) {
           return false;
         }
 
@@ -257,57 +440,103 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
   }
 
   Future<void> _deleteBooking(Booking booking) async {
-    showDialog(
+    final bool isConfirmed = await showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Confirm Deletion'),
         content: const Text('Are you sure you want to delete this booking?'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context, false),
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              
-              setState(() {
-                _isLoading = true;
-              });
-              
-              try {
-                await _bookingService.deleteBooking(
-                  booking.location,
-                  booking.dateTime,
-                  booking.roomType,
-                );
-                
-                if (mounted) {
-                  _loadBookings();  // Reload bookings after deletion
-                  
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Booking deleted successfully')),
-                  );
-                }
-              } catch (e) {
-                _logger.warning('Error deleting booking: $e');
-                
-                if (mounted) {
-                  setState(() {
-                    _isLoading = false;
-                  });
-                  
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Error deleting booking: $e')),
-                  );
-                }
-              }
-            },
+            onPressed: () => Navigator.pop(context, true),
             child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
-    );
+    ) ?? false;
+    
+    if (!isConfirmed || !mounted) return;
+              
+    setState(() {
+      _isLoading = true;
+    });
+    
+    try {
+      final success = await _bookingService.deleteBooking(booking.id);
+      
+      if (!mounted) return;
+      
+      if (success) {
+        await _loadBookings();  // Reload bookings after deletion
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Booking deleted successfully')),
+        );
+      } else {
+        setState(() {
+          _isLoading = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to delete booking')),
+        );
+      }
+    } catch (e) {
+      _logger.warning('Error deleting booking: $e');
+      
+      if (!mounted) return;
+      
+      setState(() {
+        _isLoading = false;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error deleting booking: $e')),
+      );
+    }
+  }
+  
+  Future<void> _updateBookingStatus(Booking booking, BookingStatus newStatus) async {
+    setState(() {
+      _isLoading = true;
+    });
+    
+    try {
+      final success = await _bookingService.updateBookingStatus(booking.id, newStatus);
+      
+      if (!mounted) return;
+      
+      if (success) {
+        await _loadBookings();  // Reload bookings after update
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Booking status updated to ${newStatus.displayName}')),
+        );
+      } else {
+        setState(() {
+          _isLoading = false;
+        });
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to update booking status')),
+        );
+      }
+    } catch (e) {
+      _logger.warning('Error updating booking status: $e');
+      
+      if (!mounted) return;
+      
+      setState(() {
+        _isLoading = false;
+      });
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error updating booking status: $e')),
+      );
+    }
   }
 
   @override
@@ -326,13 +555,18 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
           ),
           const SizedBox(height: 24),
 
-          // Filters
-          Row(
+          // Filters and controls
+          Wrap(
+            spacing: 16,
+            runSpacing: 16,
+            alignment: WrapAlignment.start,
             children: [
-              Expanded(
+              // Search field
+              SizedBox(
+                width: 300,
                 child: TextField(
                   decoration: const InputDecoration(
-                    hintText: 'Search by location, room type, or user...',
+                    hintText: 'Search by location, room, or user...',
                     prefixIcon: Icon(Icons.search),
                     border: OutlineInputBorder(),
                   ),
@@ -344,7 +578,8 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
                   },
                 ),
               ),
-              const SizedBox(width: 16),
+              
+              // Location filter
               DropdownButton<String>(
                 value: _filterLocation,
                 items: [
@@ -365,7 +600,8 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
                   _applyFilters();
                 },
               ),
-              const SizedBox(width: 16),
+              
+              // Room type filter
               DropdownButton<RoomType?>(
                 value: _filterRoomType,
                 hint: const Text('Room Type'),
@@ -387,6 +623,37 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
                   });
                   _applyFilters();
                 },
+              ),
+              
+              // Status filter
+              DropdownButton<BookingStatus?>(
+                value: _filterStatus,
+                hint: const Text('Status'),
+                items: [
+                  const DropdownMenuItem<BookingStatus?>(
+                    value: null,
+                    child: Text('All Statuses'),
+                  ),
+                  ...BookingStatus.values.map((status) {
+                    return DropdownMenuItem<BookingStatus?>(
+                      value: status,
+                      child: Text(status.displayName),
+                    );
+                  }),
+                ],
+                onChanged: (value) {
+                  setState(() {
+                    _filterStatus = value;
+                  });
+                  _applyFilters();
+                },
+              ),
+              
+              // Refresh button
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh',
+                onPressed: _loadBookings,
               ),
             ],
           ),
@@ -412,11 +679,12 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
                         DataColumn(label: Text('Actions')),
                       ],
                       rows: _filteredBookings.map((booking) {
-                        final isUpcoming =
-                            booking.dateTime.isAfter(DateTime.now());
+                        final isUpcoming = booking.dateTime.isAfter(DateTime.now());
                         return DataRow(
                           cells: [
-                            DataCell(Text(booking.id.substring(0, 8))),
+                            DataCell(Text(booking.id.length > 8 
+                                ? booking.id.substring(0, 8) + '...' 
+                                : booking.id)),
                             DataCell(Text(booking.location)),
                             DataCell(
                               Row(
@@ -436,17 +704,14 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
                                 padding: const EdgeInsets.symmetric(
                                     horizontal: 8, vertical: 4),
                                 decoration: BoxDecoration(
-                                  color: isUpcoming
-                                      ? Colors.green.shade100
-                                      : Colors.grey.shade300,
+                                  color: booking.status.color.withAlpha(50),
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: Text(
-                                  isUpcoming ? 'Upcoming' : 'Past',
+                                  booking.status.displayName,
                                   style: TextStyle(
-                                    color: isUpcoming
-                                        ? Colors.green.shade800
-                                        : Colors.grey.shade800,
+                                    color: booking.status.color,
+                                    fontWeight: FontWeight.bold,
                                   ),
                                 ),
                               ),
@@ -454,24 +719,46 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
                             DataCell(
                               Row(
                                 children: [
+                                  // View details button
                                   IconButton(
                                     icon: const Icon(Icons.visibility,
                                         color: primaryColor),
-                                    onPressed: () {
-                                      _showBookingDetails(booking);
-                                    },
+                                    onPressed: () => _showBookingDetails(booking),
+                                    tooltip: 'View Details',
                                   ),
-                                  IconButton(
-                                    icon: const Icon(Icons.edit,
-                                        color: Colors.amber),
-                                    onPressed: () {
-                                      _showEditBookingDialog(booking);
-                                    },
-                                  ),
+                                  
+                                  // Status update menu
+                                  if (isUpcoming)
+                                    PopupMenuButton<BookingStatus>(
+                                      tooltip: 'Update Status',
+                                      icon: const Icon(Icons.edit_note, color: Colors.amber),
+                                      onSelected: (BookingStatus status) {
+                                        _updateBookingStatus(booking, status);
+                                      },
+                                      itemBuilder: (BuildContext context) {
+                                        return [
+                                          const PopupMenuItem<BookingStatus>(
+                                            value: BookingStatus.confirmed,
+                                            child: Text('Confirm'),
+                                          ),
+                                          const PopupMenuItem<BookingStatus>(
+                                            value: BookingStatus.cancelled,
+                                            child: Text('Cancel'),
+                                          ),
+                                          const PopupMenuItem<BookingStatus>(
+                                            value: BookingStatus.pending,
+                                            child: Text('Set to Pending'),
+                                          ),
+                                        ];
+                                      },
+                                    ),
+                                  
+                                  // Delete button
                                   IconButton(
                                     icon: const Icon(Icons.delete,
                                         color: Colors.red),
                                     onPressed: () => _deleteBooking(booking),
+                                    tooltip: 'Delete',
                                   ),
                                 ],
                               ),
@@ -502,6 +789,7 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
               _buildDetailRow('Room Type', booking.roomType.displayName),
               _buildDetailRow('Date & Time', DateFormat('MMMM d, y HH:mm').format(booking.dateTime)),
               _buildDetailRow('Duration', '${booking.duration} minutes'),
+              _buildDetailRow('End Time', DateFormat('MMMM d, y HH:mm').format(booking.endTime)),
               _buildDetailRow('Status', booking.status.displayName),
               _buildDetailRow('User ID', booking.userId),
               if (booking.notes != null && booking.notes!.isNotEmpty)
@@ -536,41 +824,6 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
           ),
           Expanded(
             child: Text(value),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  void _showEditBookingDialog(Booking booking) {
-    // In a real implementation, you would have form fields here
-    // for updating the booking details
-    
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit Booking'),
-        content: const Text(
-          'Editing functionality would be implemented here with form fields '
-          'to update booking status, date/time, etc.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              // In a real implementation, you would update the booking here
-              Navigator.pop(context);
-              
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Booking editing would be implemented in a real app'),
-                ),
-              );
-            },
-            child: const Text('Save Changes'),
           ),
         ],
       ),
