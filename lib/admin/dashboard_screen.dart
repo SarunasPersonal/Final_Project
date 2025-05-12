@@ -1,4 +1,4 @@
-// Fixed import section of dashboard_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/models/room_model.dart';
@@ -44,7 +44,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   Future<void> _loadDashboardData() async {
     try {
       // Get all bookings
-      final allBookings = _bookingService.getAllBookings();
+      final allBookings = await _bookingService.getAllBookings();
 
       // Get today's bookings
       final now = DateTime.now();
@@ -263,7 +263,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
             ),
             const SizedBox(height: 16),
-            _buildRecentBookingsTable(),
+            FutureBuilder<Widget>(
+              future: _buildRecentBookingsTable(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(
+                    child: CircularProgressIndicator(color: primaryColor),
+                  );
+                } else if (snapshot.hasError) {
+                  return Center(
+                    child: Text('Error: ${snapshot.error}'),
+                  );
+                } else {
+                  return snapshot.data ?? const SizedBox.shrink();
+                }
+              },
+            ),
           ],
         ),
       ),
@@ -864,8 +879,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // Build the recent bookings table
-  Widget _buildRecentBookingsTable() {
-    final bookings = _bookingService.getAllBookings();
+  Future<Widget> _buildRecentBookingsTable() async {
+    final bookings = await _bookingService.getAllBookings();
 
     // Sort bookings by date (newest first)
     bookings.sort((a, b) => b.dateTime.compareTo(a.dateTime));
