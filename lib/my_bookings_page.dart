@@ -27,7 +27,7 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
   // Updated to use async Firebase calls
   Future<void> _loadUserBookings() async {
     setState(() {
-      _isLoading = true;
+      _isLoading = true;git
     });
     
     try {
