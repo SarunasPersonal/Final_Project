@@ -1,64 +1,64 @@
+// lib/booking_model.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-// Importing the Flutter Material package for UI components and icons.
 import 'package:flutter_ucs_app/models/room_model.dart';
+import 'package:logging/logging.dart';
 
 class Booking {
+  final String id; // Added ID field
   final String location;
-  // The location of the booking.
   final DateTime dateTime;
-  // The date and time of the booking.
   final String userId;
-  // The ID of the user who made the booking.
   final RoomType roomType;
-  // The type of room being booked.
   final List<RoomFeature> features;
-  // A list of additional features requested for the room.
   final String? roomId;
-  // The specific room ID for this booking (optional for backward compatibility)
+  final int duration; // Duration in minutes
 
   Booking({
+    String? id, // Made ID optional for backward compatibility
     required this.location,
-    // Constructor parameter for location (required).
     required this.dateTime,
-    // Constructor parameter for dateTime (required).
     required this.userId,
-    // Constructor parameter for userId (required).
     required this.roomType,
-    // Constructor parameter for roomType (required).
     required this.features,
-    // Constructor parameter for features (required).
     this.roomId,
-    // Constructor parameter for roomId (optional).
-  });
+    this.duration = 60, // Default 60 minutes
+  }) : this.id = id ?? DateTime.now().millisecondsSinceEpoch.toString();
 
   // Convert to a map for Firestore
   Map<String, dynamic> toMap() {
     return {
+      'id': id,
       'location': location,
       'dateTime': dateTime,
       'userId': userId,
-      'roomType': roomTypeToString(roomType),
-      'features': features.map((f) => featureToString(f)).toList(),
+      'roomType': _roomTypeToString(roomType),
+      'features': features.map((f) => _featureToString(f)).toList(),
       'roomId': roomId,
+      'duration': duration,
     };
   }
 
   // Create from a map from Firestore
   factory Booking.fromMap(Map<String, dynamic> map) {
     return Booking(
+      id: map['id'],
       location: map['location'],
-      dateTime: map['dateTime'].toDate(),
+      dateTime: map['dateTime'] is Timestamp 
+          ? (map['dateTime'] as Timestamp).toDate() 
+          : DateTime.parse(map['dateTime'].toString()),
       userId: map['userId'],
-      roomType: stringToRoomType(map['roomType']),
+      roomType: _stringToRoomType(map['roomType']),
       features:
-          (map['features'] as List?)?.map((f) => stringToFeature(f)).toList() ??
+          (map['features'] as List?)?.map((f) => _stringToFeature(f)).toList() ??
               [],
       roomId: map['roomId'],
+      duration: map['duration'] ?? 60,
     );
   }
 
   // Helper methods for conversion
-  static String roomTypeToString(RoomType type) {
+  static String _roomTypeToString(RoomType type) {
     switch (type) {
       case RoomType.quietRoom:
         return 'quiet';
@@ -69,7 +69,7 @@ class Booking {
     }
   }
 
-  static RoomType stringToRoomType(String type) {
+  static RoomType _stringToRoomType(String type) {
     switch (type) {
       case 'quiet':
         return RoomType.quietRoom;
@@ -82,7 +82,7 @@ class Booking {
     }
   }
 
-  static String featureToString(RoomFeature feature) {
+  static String _featureToString(RoomFeature feature) {
     switch (feature) {
       case RoomFeature.projector:
         return 'projector';
@@ -99,7 +99,7 @@ class Booking {
     }
   }
 
-  static RoomFeature stringToFeature(String feature) {
+  static RoomFeature _stringToFeature(String feature) {
     switch (feature) {
       case 'projector':
         return RoomFeature.projector;
@@ -119,65 +119,244 @@ class Booking {
   }
 }
 
-// Simple in-memory storage for bookings
 class BookingService {
   // Singleton pattern
   static final BookingService _instance = BookingService._internal();
-  // A private static instance of the BookingService class.
   factory BookingService() => _instance;
-  // Factory constructor to return the singleton instance.
   BookingService._internal();
-  // Private named constructor for internal use.
 
-  final List<Booking> _bookings = [];
-  // A private list to store all bookings.
+  // Logger for debugging
+  final _logger = Logger('BookingService');
+  
+  // Firebase Firestore reference
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final String _collection = 'bookings';
 
-  // Add a new booking
-  void addBooking(Booking booking) {
-    _bookings.add(booking);
-    // Adds a new booking to the list.
+  // Add a new booking to Firestore
+  Future<bool> addBooking(Booking booking) async {
+    try {
+      await _firestore.collection(_collection).doc(booking.id).set({
+        'id': booking.id,
+        'location': booking.location,
+        'dateTime': booking.dateTime,
+        'userId': booking.userId,
+        'roomType': Booking._roomTypeToString(booking.roomType),
+        'features': booking.features.map((f) => Booking._featureToString(f)).toList(),
+        'roomId': booking.roomId,
+        'duration': booking.duration,
+      });
+      
+      _logger.info('Added booking: ${booking.id} in ${booking.location}');
+      return true;
+    } catch (e) {
+      _logger.severe('Error adding booking: $e');
+      return false;
+    }
   }
 
-  // Get all bookings
-  List<Booking> getAllBookings() {
-    return List.from(_bookings);
-    // Returns a copy of the list of all bookings.
+  // Get all bookings from Firestore
+  Future<List<Booking>> getAllBookings() async {
+    try {
+      final QuerySnapshot snapshot = await _firestore.collection(_collection).get();
+      
+      return snapshot.docs.map((doc) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        return Booking.fromMap(data);
+      }).toList();
+    } catch (e) {
+      _logger.warning('Error getting bookings: $e');
+      // Return empty list if there's an error
+      return [];
+    }
   }
 
   // Get bookings for a specific user
-  List<Booking> getUserBookings(String userId) {
-    return _bookings.where((booking) => booking.userId == userId).toList();
-    // Filters and returns bookings that match the given userId.
+  Future<List<Booking>> getUserBookings(String userId) async {
+    try {
+      final QuerySnapshot snapshot = await _firestore
+          .collection(_collection)
+          .where('userId', isEqualTo: userId)
+          .get();
+      
+      return snapshot.docs.map((doc) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        return Booking.fromMap(data);
+      }).toList();
+    } catch (e) {
+      _logger.warning('Error getting user bookings: $e');
+      return [];
+    }
   }
 
-  // Delete a booking by matching date and location
-  void deleteBooking(String location, DateTime dateTime, RoomType roomType) {
-    _bookings.removeWhere((booking) =>
-        booking.location == location &&
-        booking.dateTime == dateTime &&
-        booking.roomType == roomType);
-    // Removes a booking from the list if it matches the given location, dateTime, and roomType.
+  // Delete a booking by matching criteria
+  Future<bool> deleteBooking(String location, DateTime dateTime, RoomType roomType) async {
+    try {
+      // Convert the room type to string for querying
+      String roomTypeStr = Booking._roomTypeToString(roomType);
+      
+      // Query bookings matching the criteria
+      QuerySnapshot snapshot = await _firestore
+          .collection(_collection)
+          .where('location', isEqualTo: location)
+          .where('roomType', isEqualTo: roomTypeStr)
+          .get();
+      
+      // Find the booking with matching date
+      String? docIdToDelete;
+      for (final doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final DateTime bookingDate = (data['dateTime'] as Timestamp).toDate();
+        
+        // Check if the dates are the same (ignore time)
+        if (bookingDate.year == dateTime.year && 
+            bookingDate.month == dateTime.month && 
+            bookingDate.day == dateTime.day) {
+          docIdToDelete = doc.id;
+          break;
+        }
+      }
+      
+      // Delete the booking if found
+      if (docIdToDelete != null) {
+        await _firestore.collection(_collection).doc(docIdToDelete).delete();
+        _logger.info('Deleted booking: $docIdToDelete');
+        return true;
+      } else {
+        _logger.warning('No matching booking found for deletion');
+        return false;
+      }
+    } catch (e) {
+      _logger.severe('Error deleting booking: $e');
+      return false;
+    }
   }
 
   // Get room bookings by room ID
-  List<Booking> getRoomBookings(String roomId) {
-    return _bookings.where((booking) => booking.roomId == roomId).toList();
-    // Filters and returns bookings that match the given roomId.
+  Future<List<Booking>> getRoomBookings(String roomId) async {
+    try {
+      final QuerySnapshot snapshot = await _firestore
+          .collection(_collection)
+          .where('roomId', isEqualTo: roomId)
+          .get();
+      
+      return snapshot.docs.map((doc) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        return Booking.fromMap(data);
+      }).toList();
+    } catch (e) {
+      _logger.warning('Error getting room bookings: $e');
+      return [];
+    }
   }
 
   // Check if a room is available at a specific time
-  bool isRoomAvailable(String roomId, DateTime dateTime) {
-    return !_bookings.any((booking) =>
-        booking.roomId == roomId &&
-        booking.dateTime.year == dateTime.year &&
-        booking.dateTime.month == dateTime.month &&
-        booking.dateTime.day == dateTime.day &&
-        booking.dateTime.hour == dateTime.hour);
+  Future<bool> isRoomAvailable(String roomId, DateTime dateTime) async {
+    try {
+      // Get the start and end of the day
+      final start = DateTime(dateTime.year, dateTime.month, dateTime.day);
+      final end = start.add(const Duration(days: 1));
+      
+      // Query for bookings on the same day for the same room
+      final QuerySnapshot snapshot = await _firestore
+          .collection(_collection)
+          .where('roomId', isEqualTo: roomId)
+          .where('dateTime', isGreaterThanOrEqualTo: start)
+          .where('dateTime', isLessThan: end)
+          .get();
+      
+      // Check if any booking overlaps with the requested time
+      for (final doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>;
+        final DateTime bookingTime = (data['dateTime'] as Timestamp).toDate();
+        final int bookingDuration = (data['duration'] as int?) ?? 60;
+        
+        // Calculate booking end time
+        final DateTime bookingEndTime = bookingTime.add(Duration(minutes: bookingDuration));
+        
+        // Check for overlap
+        final DateTime requestEndTime = dateTime.add(const Duration(hours: 1));
+        
+        if ((dateTime.isAfter(bookingTime) && dateTime.isBefore(bookingEndTime)) ||
+            (requestEndTime.isAfter(bookingTime) && requestEndTime.isBefore(bookingEndTime)) ||
+            (dateTime.isAtSameMomentAs(bookingTime)) ||
+            (requestEndTime.isAtSameMomentAs(bookingEndTime))) {
+          return false; // Overlap found
+        }
+      }
+      
+      return true; // No overlap, room is available
+    } catch (e) {
+      _logger.warning('Error checking room availability: $e');
+      return false; // In case of error, assume room is not available
+    }
+  }
+  
+  // Delete booking by ID
+  Future<bool> deleteBookingById(String bookingId) async {
+    try {
+      await _firestore.collection(_collection).doc(bookingId).delete();
+      _logger.info('Deleted booking with ID: $bookingId');
+      return true;
+    } catch (e) {
+      _logger.severe('Error deleting booking by ID: $e');
+      return false;
+    }
+  }
+  
+  // Get bookings for a specific location
+  Future<List<Booking>> getLocationBookings(String location) async {
+    try {
+      final QuerySnapshot snapshot = await _firestore
+          .collection(_collection)
+          .where('location', isEqualTo: location)
+          .get();
+      
+      return snapshot.docs.map((doc) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        return Booking.fromMap(data);
+      }).toList();
+    } catch (e) {
+      _logger.warning('Error getting location bookings: $e');
+      return [];
+    }
+  }
+  
+  // Get bookings for a specific date range
+  Future<List<Booking>> getBookingsInDateRange(DateTime start, DateTime end) async {
+    try {
+      final QuerySnapshot snapshot = await _firestore
+          .collection(_collection)
+          .where('dateTime', isGreaterThanOrEqualTo: start)
+          .where('dateTime', isLessThan: end)
+          .get();
+      
+      return snapshot.docs.map((doc) {
+        Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+        return Booking.fromMap(data);
+      }).toList();
+    } catch (e) {
+      _logger.warning('Error getting bookings in date range: $e');
+      return [];
+    }
   }
 }
 
-// Mock current user for development
+// Current user utility class
 class CurrentUser {
   static String? userId =
       'user123'; // Replace with actual user ID in production
+  static String? email;
+  static bool isAdmin = false;
+  
+  static void login(String userEmail, String userUid, {bool admin = false}) {
+    email = userEmail;
+    userId = userUid;
+    isAdmin = admin;
+  }
+  
+  static void logout() {
+    userId = null;
+    email = null;
+    isAdmin = false;
+  }
 }

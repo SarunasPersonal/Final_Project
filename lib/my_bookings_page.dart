@@ -1,8 +1,10 @@
+// lib/my_bookings_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/models/room_model.dart';
 import 'package:flutter_ucs_app/booking_model.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_ucs_app/admin/models/current_user.dart'; // Import CurrentUser
 
 class MyBookingsPage extends StatefulWidget {
   const MyBookingsPage({super.key});
@@ -14,6 +16,7 @@ class MyBookingsPage extends StatefulWidget {
 class _MyBookingsPageState extends State<MyBookingsPage> {
   final BookingService _bookingService = BookingService();
   List<Booking> userBookings = [];
+  bool _isLoading = true; // Add loading state
 
   @override
   void initState() {
@@ -21,10 +24,42 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
     _loadUserBookings();
   }
 
-  void _loadUserBookings() {
-    if (CurrentUser.userId != null) {
-      userBookings = _bookingService.getUserBookings(CurrentUser.userId!);
-      setState(() {});
+  // Updated to use async Firebase calls
+  Future<void> _loadUserBookings() async {
+    setState(() {
+      _isLoading = true;
+    });
+    
+    try {
+      if (CurrentUser.userId != null) {
+        // Get bookings from Firebase
+        final bookings = await _bookingService.getUserBookings(CurrentUser.userId!);
+        
+        if (mounted) {
+          setState(() {
+            userBookings = bookings;
+            _isLoading = false;
+          });
+        }
+      } else {
+        // Handle case where no user is logged in
+        if (mounted) {
+          setState(() {
+            userBookings = [];
+            _isLoading = false;
+          });
+          
+          _showSnackBar('No user logged in. Please log in to view your bookings.', 
+              color: Colors.red);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+        _showSnackBar('Error loading bookings: $e', color: Colors.red);
+      }
     }
   }
 
@@ -65,24 +100,54 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
             ),
             // Confirm button
             TextButton(
-              onPressed: () {
-                _bookingService.deleteBooking(
-                    booking.location, booking.dateTime, booking.roomType);
+              onPressed: () async {
                 Navigator.of(context).pop();
-                setState(() =>
-                    _loadUserBookings()); // Reload bookings after deletion
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Booking cancelled successfully'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
+                
+                setState(() => _isLoading = true);
+                
+                try {
+                  // Updated to use async Firebase delete
+                  bool success = await _bookingService.deleteBooking(
+                    booking.location, 
+                    booking.dateTime, 
+                    booking.roomType
+                  );
+                  
+                  if (mounted) {
+                    if (success) {
+                      _showSnackBar('Booking cancelled successfully', 
+                          color: Colors.green);
+                      // Reload bookings after deletion
+                      await _loadUserBookings();
+                    } else {
+                      _showSnackBar('Failed to cancel booking', 
+                          color: Colors.red);
+                      setState(() => _isLoading = false);
+                    }
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    _showSnackBar('Error: $e', color: Colors.red);
+                    setState(() => _isLoading = false);
+                  }
+                }
               },
               child: const Text('YES', style: TextStyle(color: primaryColor)),
             ),
           ],
         );
       },
+    );
+  }
+  
+  // Show a snackbar message
+  void _showSnackBar(String message, {Color color = Colors.black}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
@@ -100,20 +165,29 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
           'My Bookings',
           style: TextStyle(color: primaryColor),
         ),
+        actions: [
+          // Add a refresh button
+          IconButton(
+            icon: const Icon(Icons.refresh, color: primaryColor),
+            onPressed: _loadUserBookings,
+            tooltip: 'Refresh bookings',
+          ),
+        ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: userBookings.isEmpty
-            ? _buildEmptyState() // Show empty state if no bookings
-            : _buildBookingsList(), // Show bookings list otherwise
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: primaryColor))
+          : Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: userBookings.isEmpty
+                  ? _buildEmptyState() // Show empty state if no bookings
+                  : _buildBookingsList(), // Show bookings list otherwise
+            ),
+      floatingActionButton: FloatingActionButton(
+        backgroundColor: primaryColor,
+        onPressed: () => Navigator.pop(context), // Navigate back to booking page
+        child: const Icon(Icons.add, color: secondaryColor),
+        tooltip: 'Book a new room',
       ),
-      floatingActionButton: userBookings.isNotEmpty
-          ? FloatingActionButton(
-              backgroundColor: primaryColor,
-              onPressed: () => Navigator.pop(context), // Navigate back
-              child: const Icon(Icons.add, color: secondaryColor),
-            )
-          : null,
     );
   }
 
@@ -164,13 +238,28 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
 
   // Build the list of bookings
   Widget _buildBookingsList() {
+    // Sort bookings with upcoming first, then by date
+    final now = DateTime.now();
+    userBookings.sort((a, b) {
+      // Sort by upcoming/past first
+      bool aIsUpcoming = a.dateTime.isAfter(now);
+      bool bIsUpcoming = b.dateTime.isAfter(now);
+      
+      if (aIsUpcoming && !bIsUpcoming) return -1;
+      if (!aIsUpcoming && bIsUpcoming) return 1;
+      
+      // Then sort by date (most recent first for upcoming, oldest first for past)
+      return aIsUpcoming 
+          ? a.dateTime.compareTo(b.dateTime)  // Ascending for upcoming
+          : b.dateTime.compareTo(a.dateTime); // Descending for past
+    });
+  
     return ListView.builder(
       itemCount: userBookings.length,
       itemBuilder: (context, index) {
         final booking = userBookings[index];
         final formattedDateTime = _formatDateTime(booking.dateTime);
-        final isUpcoming = booking.dateTime
-            .isAfter(DateTime.now()); // Check if the booking is upcoming
+        final isUpcoming = booking.dateTime.isAfter(DateTime.now());
 
         return Card(
           margin: const EdgeInsets.only(bottom: 16),
@@ -278,6 +367,17 @@ class _MyBookingsPageState extends State<MyBookingsPage> {
               color: isUpcoming ? Colors.black87 : Colors.grey,
             ),
           ),
+          // Add duration info
+          if (booking.duration > 0) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Duration: ${booking.duration} minutes',
+              style: TextStyle(
+                fontSize: 14,
+                color: isUpcoming ? Colors.black87 : Colors.grey,
+              ),
+            ),
+          ],
         ],
       ),
     );

@@ -1,8 +1,10 @@
+// lib/booking_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/booking_model.dart';
 import 'package:flutter_ucs_app/models/room_model.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_ucs_app/admin/models/current_user.dart'; // Import CurrentUser
 
 class BookingPage extends StatefulWidget {
   final String location;
@@ -19,11 +21,16 @@ class _BookingPageState extends State<BookingPage> {
   final RoomService _roomService = RoomService();
   bool _isLoading = false;
   bool _isLoadingRooms = true;
+  bool _isRoomAvailable = true;
 
   // Room selection
   RoomType _selectedRoomType = RoomType.quietRoom;
   Room? _selectedRoom;
   List<Room> _availableRooms = [];
+
+  // Booking duration
+  int _duration = 60; // Default 60 minutes
+  final List<int> _durationOptions = [30, 60, 90, 120, 180]; // Options in minutes
 
   final Map<RoomFeature, bool> _selectedFeatures = {
     for (var feature in RoomFeature.values) feature: false
@@ -66,21 +73,25 @@ class _BookingPageState extends State<BookingPage> {
     try {
       final rooms = await _roomService.getRoomsByCampus(widget.location);
 
-      setState(() {
-        _availableRooms = rooms.where((room) => room.isAvailable).toList();
-        _isLoadingRooms = false;
+      if (mounted) {
+        setState(() {
+          _availableRooms = rooms.where((room) => room.isAvailable).toList();
+          _isLoadingRooms = false;
 
-        // Filter rooms by selected type
-        _filterRoomsByType();
-      });
+          // Filter rooms by selected type
+          _filterRoomsByType();
+        });
+      }
     } catch (e) {
       print('Error loading rooms: $e');
-      setState(() {
-        _isLoadingRooms = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoadingRooms = false;
+        });
 
-      _showSnackBar('Error loading rooms. Please try again.',
-          color: Colors.red);
+        _showSnackBar('Error loading rooms. Please try again.',
+            color: Colors.red);
+      }
     }
   }
 
@@ -106,12 +117,13 @@ class _BookingPageState extends State<BookingPage> {
   }
 
   // Check if the selected room is available at the selected time
-  bool _isRoomAvailableAtSelectedTime() {
+  Future<bool> _isRoomAvailableAtSelectedTime() async {
     if (_selectedRoom == null || selectedDateTime == null) {
       return false;
     }
 
-    return _bookingService.isRoomAvailable(
+    // Modified to use async Firebase check
+    return await _bookingService.isRoomAvailable(
         _selectedRoom!.id, selectedDateTime!);
   }
 
@@ -151,14 +163,29 @@ class _BookingPageState extends State<BookingPage> {
     });
 
     // Check if the room is available at the selected time
-    if (_selectedRoom != null && !_isRoomAvailableAtSelectedTime()) {
-      _showSnackBar(
-        'The selected room is not available at this time. Please select a different time or room.',
-        color: Colors.red,
-        duration: const Duration(seconds: 3),
-      );
-    } else {
-      _showSnackBar('Selected date and time: $formattedDateTime');
+    if (_selectedRoom != null) {
+      setState(() {
+        _isLoading = true; // Show loading while checking availability
+      });
+      
+      bool isAvailable = await _isRoomAvailableAtSelectedTime();
+      
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isRoomAvailable = isAvailable;
+        });
+        
+        if (!isAvailable) {
+          _showSnackBar(
+            'The selected room is not available at this time. Please select a different time or room.',
+            color: Colors.red,
+            duration: const Duration(seconds: 3),
+          );
+        } else {
+          _showSnackBar('Selected date and time: $formattedDateTime');
+        }
+      }
     }
   }
 
@@ -242,6 +269,8 @@ class _BookingPageState extends State<BookingPage> {
                     SizedBox(height: 8),
                     Text('Location: ${_selectedRoom!.location}'),
                   ],
+                  SizedBox(height: 8),
+                  Text('Duration: $_duration minutes'),
                   if (features.isNotEmpty) ..._buildFeaturesList(features),
                 ],
               ),
@@ -309,37 +338,52 @@ class _BookingPageState extends State<BookingPage> {
         .toList();
   }
 
-  void _confirmBooking() async {
+  // Confirm booking with Firebase
+  Future<void> _confirmBooking() async {
     setState(() => _isLoading = true);
 
     try {
+      // Get user ID from CurrentUser
+      final userId = CurrentUser.userId ?? 'unknown';
+      if (userId == 'unknown') {
+        _showSnackBar('Error: Not signed in', color: Colors.red);
+        setState(() => _isLoading = false);
+        return;
+      }
+      
       final List<RoomFeature> features = _getSelectedFeatures();
 
       // Create a new booking with the room ID included
       final newBooking = Booking(
         location: widget.location,
         dateTime: selectedDateTime!,
-        userId: CurrentUser.userId ?? 'unknown',
+        userId: userId,
         roomType: _selectedRoomType,
         features: features,
         roomId: _selectedRoom?.id, // Include the selected room's ID
+        duration: _duration, // Use selected duration
       );
 
-      _bookingService.addBooking(newBooking);
+      // Add booking to Firebase
+      bool success = await _bookingService.addBooking(newBooking);
 
       if (!mounted) return;
 
-      _showSnackBar(
-        'Booking confirmed for ${_selectedRoom?.name ?? _selectedRoomType.displayName} at ${widget.location} on $formattedDateTime',
-        color: Colors.green,
-        duration: const Duration(seconds: 4),
-      );
+      if (success) {
+        _showSnackBar(
+          'Booking confirmed for ${_selectedRoom?.name ?? _selectedRoomType.displayName} at ${widget.location} on $formattedDateTime',
+          color: Colors.green,
+          duration: const Duration(seconds: 4),
+        );
 
-      // Navigate back after successful booking
-      Future.delayed(const Duration(seconds: 2), () {
-        if (!mounted) return;
-        Navigator.pop(context);
-      });
+        // Navigate back after successful booking
+        Future.delayed(const Duration(seconds: 2), () {
+          if (!mounted) return;
+          Navigator.pop(context);
+        });
+      } else {
+        _showSnackBar('Error: Failed to save booking', color: Colors.red);
+      }
     } catch (e) {
       if (!mounted) return;
       _showSnackBar('Error: ${e.toString()}', color: Colors.red);
@@ -364,67 +408,84 @@ class _BookingPageState extends State<BookingPage> {
   }
 
   // Method to show existing bookings for the selected room
-  void _showExistingBookings() {
+  Future<void> _showExistingBookings() async {
     if (_selectedRoom == null) {
       _showSnackBar('Please select a room first');
       return;
     }
 
-    // Get bookings for the selected room
-    final roomBookings = _bookingService.getRoomBookings(_selectedRoom!.id);
+    setState(() {
+      _isLoading = true;
+    });
 
-    // Sort bookings by date/time
-    roomBookings.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+    try {
+      // Get bookings for the selected room
+      final roomBookings = await _bookingService.getRoomBookings(_selectedRoom!.id);
 
-    // Only show future bookings
-    final futureBookings = roomBookings
-        .where((booking) => booking.dateTime.isAfter(DateTime.now()))
-        .toList();
+      setState(() {
+        _isLoading = false;
+      });
 
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: Text('Existing Bookings for ${_selectedRoom!.name}'),
-          content: Container(
-            width: double.maxFinite,
-            child: futureBookings.isEmpty
-                ? const Center(
-                    child: Padding(
-                      padding: EdgeInsets.all(20.0),
-                      child: Text(
-                        'No upcoming bookings for this room',
-                        style: TextStyle(fontStyle: FontStyle.italic),
+      if (!mounted) return;
+
+      // Sort bookings by date/time
+      roomBookings.sort((a, b) => a.dateTime.compareTo(b.dateTime));
+
+      // Only show future bookings
+      final futureBookings = roomBookings
+          .where((booking) => booking.dateTime.isAfter(DateTime.now()))
+          .toList();
+
+      showDialog(
+        context: context,
+        builder: (BuildContext context) {
+          return AlertDialog(
+            title: Text('Existing Bookings for ${_selectedRoom!.name}'),
+            content: Container(
+              width: double.maxFinite,
+              child: futureBookings.isEmpty
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(20.0),
+                        child: Text(
+                          'No upcoming bookings for this room',
+                          style: TextStyle(fontStyle: FontStyle.italic),
+                        ),
                       ),
-                    ),
-                  )
-                : ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: futureBookings.length,
-                    itemBuilder: (context, index) {
-                      final booking = futureBookings[index];
-                      final formattedTime = DateFormat('EEEE, MMM d')
-                          .add_jm()
-                          .format(booking.dateTime);
+                    )
+                  : ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: futureBookings.length,
+                      itemBuilder: (context, index) {
+                        final booking = futureBookings[index];
+                        final formattedTime = DateFormat('EEEE, MMM d')
+                            .add_jm()
+                            .format(booking.dateTime);
 
-                      return ListTile(
-                        leading: Icon(Icons.event, color: primaryColor),
-                        title: Text(formattedTime),
-                        subtitle: Text('Booked by: ${booking.userId}'),
-                      );
-                    },
-                  ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text('Close'),
-              style: TextButton.styleFrom(foregroundColor: primaryColor),
+                        return ListTile(
+                          leading: Icon(Icons.event, color: primaryColor),
+                          title: Text(formattedTime),
+                          subtitle: Text('Booked by: ${booking.userId}\nDuration: ${booking.duration} minutes'),
+                        );
+                      },
+                    ),
             ),
-          ],
-        );
-      },
-    );
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: Text('Close'),
+                style: TextButton.styleFrom(foregroundColor: primaryColor),
+              ),
+            ],
+          );
+        },
+      );
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      _showSnackBar('Error loading bookings: $e', color: Colors.red);
+    }
   }
 
   void _showHelpDialog() {
@@ -449,7 +510,8 @@ class _BookingPageState extends State<BookingPage> {
                 _buildHelpItem(
                     '2. Choose a specific room from the available options'),
                 _buildHelpItem('3. Select a date and time for your booking'),
-                _buildHelpItem('4. Review and confirm your booking details'),
+                _buildHelpItem('4. Choose a duration for your booking'),
+                _buildHelpItem('5. Review and confirm your booking details'),
                 const SizedBox(height: 10),
                 const Text(
                   'Accessibility Features:',
@@ -552,54 +614,90 @@ class _BookingPageState extends State<BookingPage> {
           ),
         ],
       ),
-      body: _isLoadingRooms
-          ? Center(child: CircularProgressIndicator(color: primaryColor))
-          : SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildLocationHeader(),
-                    const SizedBox(height: 30),
+      body: Stack(
+        children: [
+          _isLoadingRooms
+              ? Center(child: CircularProgressIndicator(color: primaryColor))
+              : SingleChildScrollView(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildLocationHeader(),
+                        const SizedBox(height: 30),
 
-                    // Room Type Selection
-                    _buildSectionHeader('Select Room Type'),
-                    const SizedBox(height: 15),
+                        // Room Type Selection
+                        _buildSectionHeader('Select Room Type'),
+                        const SizedBox(height: 15),
 
-                    _buildRoomTypeSelector(),
+                        _buildRoomTypeSelector(),
 
-                    // Available Rooms Selection
-                    const SizedBox(height: 30),
-                    _buildSectionHeader('Available Rooms'),
-                    const SizedBox(height: 15),
+                        // Available Rooms Selection
+                        const SizedBox(height: 30),
+                        _buildSectionHeader('Available Rooms'),
+                        const SizedBox(height: 15),
 
-                    _buildRoomsSelector(),
+                        _buildRoomsSelector(),
 
-                    // Room Features (only visible if selected room has features)
-                    if (_selectedRoom != null &&
-                        _selectedRoom!.features.isNotEmpty)
-                      _buildRoomFeatures(),
+                        // Room Features (only visible if selected room has features)
+                        if (_selectedRoom != null &&
+                            _selectedRoom!.features.isNotEmpty)
+                          _buildRoomFeatures(),
 
-                    const SizedBox(height: 30),
-                    _buildSectionHeader('Select Date & Time'),
-                    const SizedBox(height: 10),
+                        // Date & Time Selection
+                        const SizedBox(height: 30),
+                        _buildSectionHeader('Select Date & Time'),
+                        const SizedBox(height: 10),
 
-                    const Text(
-                      'Please select a date and time for your appointment:',
-                      style: TextStyle(fontSize: 16, color: Colors.grey),
+                        const Text(
+                          'Please select a date and time for your appointment:',
+                          style: TextStyle(fontSize: 16, color: Colors.grey),
+                        ),
+                        const SizedBox(height: 20),
+                        _buildDateTimeSelector(),
+
+                        if (selectedDateTime != null) _buildSelectedDateTime(),
+                        
+                        // Duration Selection
+                        const SizedBox(height: 30),
+                        _buildSectionHeader('Select Duration'),
+                        const SizedBox(height: 10),
+                        
+                        _buildDurationSelector(),
+
+                        const SizedBox(height: 40),
+                        _buildConfirmButton(),
+                      ],
                     ),
-                    const SizedBox(height: 20),
-                    _buildDateTimeSelector(),
-
-                    if (selectedDateTime != null) _buildSelectedDateTime(),
-
-                    const SizedBox(height: 40),
-                    _buildConfirmButton(),
-                  ],
+                  ),
+                ),
+          // Loading overlay
+          if (_isLoading)
+            Container(
+              color: Colors.black.withOpacity(0.3),
+              child: Center(
+                child: Card(
+                  elevation: 8,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(20.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(color: primaryColor),
+                        SizedBox(height: 16),
+                        Text('Processing your request...'),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
+        ],
+      ),
     );
   }
 
@@ -914,18 +1012,39 @@ class _BookingPageState extends State<BookingPage> {
           child: Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
-              color: primaryColor.withAlpha(26),
+              color: _isRoomAvailable ? primaryColor.withAlpha(26) : Colors.red.withAlpha(26),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: primaryColor.withAlpha(128)),
+              border: Border.all(
+                color: _isRoomAvailable ? primaryColor.withAlpha(128) : Colors.red.withAlpha(128)
+              ),
             ),
             child: Row(
               children: [
-                const Icon(Icons.event_available, color: primaryColor),
+                Icon(
+                  _isRoomAvailable ? Icons.event_available : Icons.event_busy,
+                  color: _isRoomAvailable ? primaryColor : Colors.red,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    formattedDateTime!,
-                    style: const TextStyle(fontSize: 16, color: primaryColor),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        formattedDateTime!,
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: _isRoomAvailable ? primaryColor : Colors.red,
+                        ),
+                      ),
+                      if (!_isRoomAvailable)
+                        Text(
+                          'Room not available at this time',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.red,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ],
@@ -935,21 +1054,69 @@ class _BookingPageState extends State<BookingPage> {
       ],
     );
   }
+  
+  Widget _buildDurationSelector() {
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'How long do you need the room?',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+            SizedBox(height: 16),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _durationOptions.map((duration) {
+                final bool isSelected = _duration == duration;
+                return ChoiceChip(
+                  label: Text('$duration min'),
+                  selected: isSelected,
+                  selectedColor: primaryColor.withAlpha(200),
+                  labelStyle: TextStyle(
+                    color: isSelected ? Colors.white : Colors.black,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                  ),
+                  backgroundColor: Colors.grey.shade200,
+                  onSelected: (selected) {
+                    if (selected) {
+                      setState(() {
+                        _duration = duration;
+                      });
+                    }
+                  },
+                );
+              }).toList(),
+            ),
+            SizedBox(height: 10),
+            Text(
+              'Current selection: $_duration minutes',
+              style: TextStyle(
+                fontStyle: FontStyle.italic,
+                color: Colors.grey.shade700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   Widget _buildConfirmButton() {
-    bool isRoomAvailable = _selectedRoom != null &&
-        selectedDateTime != null &&
-        _isRoomAvailableAtSelectedTime();
-    bool canConfirm =
-        selectedDateTime != null && _selectedRoom != null && isRoomAvailable;
-
     return Focus(
       focusNode: _confirmButtonFocusNode,
       child: Semantics(
         button: true,
         label: 'Confirm booking button',
         hint: 'Tap to review and confirm your booking details',
-        enabled: canConfirm && !_isLoading,
+        enabled: _canConfirmBooking() && !_isLoading,
         child: ElevatedButton.icon(
           icon: const Icon(Icons.check_circle, color: secondaryColor),
           style: ElevatedButton.styleFrom(
@@ -957,28 +1124,22 @@ class _BookingPageState extends State<BookingPage> {
             minimumSize: const Size(double.infinity, 50),
             disabledBackgroundColor: Colors.grey,
           ),
-          onPressed:
-              (!canConfirm || _isLoading) ? null : _showConfirmationDialog,
-          label: _isLoading
-              ? SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    color: secondaryColor,
-                    strokeWidth: 2,
-                    semanticsLabel: 'Loading indicator',
-                  ),
-                )
-              : Text(
-                  !isRoomAvailable &&
-                          _selectedRoom != null &&
-                          selectedDateTime != null
-                      ? 'Room Not Available'
-                      : 'Confirm Booking',
-                  style: const TextStyle(color: secondaryColor, fontSize: 16),
-                ),
+          onPressed: (!_canConfirmBooking() || _isLoading) 
+              ? null 
+              : _showConfirmationDialog,
+          label: Text(
+            'Confirm Booking',
+            style: const TextStyle(color: secondaryColor, fontSize: 16),
+          ),
         ),
       ),
     );
+  }
+  
+  // Check if booking can be confirmed
+  bool _canConfirmBooking() {
+    return _selectedRoom != null && 
+           selectedDateTime != null && 
+           _isRoomAvailable;
   }
 }
