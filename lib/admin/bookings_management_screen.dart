@@ -172,16 +172,15 @@ class BookingService {
       
       // Get bookings from Firestore, ordered by date/time descending
       final QuerySnapshot snapshot = await _firestore
-          .collection(_collectionName)
+          .collection(_collection)
           .orderBy('dateTime', descending: true)
           .get();
       
       // Convert documents to Booking objects
       final bookings = snapshot.docs.map((doc) => Booking.fromFirestore(doc)).toList();
       
-      if (bookings.isEmpty) {
-        // If still empty, create sample bookings
-        await _createSampleBookings();
+      if (bookings.isEmpty && !(await _checkCollectionExists())) {
+      await _createSampleBookings();
         
         // Try fetching again
         final retrySnapshot = await _firestore
@@ -197,7 +196,14 @@ class BookingService {
       _logger.warning('Error fetching bookings: $e');
       
       // If Firestore query fails, return mock data
-      return _getMockBookings();
+      bool collectionExists = await _checkCollectionExists();
+      if (!collectionExists) {
+        return _getMockBookings();
+    } else {
+      // Just return an empty list instead of mock data if the collection exists but query failed
+      return [];
+    }
+  }
     }
   }
 
@@ -215,12 +221,12 @@ class BookingService {
   // Delete a booking from Firestore
   Future<bool> deleteBooking(String bookingId) async {
     try {
-      await _firestore.collection(_collectionName).doc(bookingId).delete();
-      _logger.info('Deleted booking: $bookingId');
-      return true;
-    } catch (e) {
-      _logger.warning('Error deleting booking: $e');
-      return false;
+      await _firestore.collection(_collection).doc(bookingId).delete();
+    _logger.info('Deleted booking: $bookingId');
+    return true;
+  } catch (e) {
+    _logger.severe('Error deleting booking: $e');
+    return false;
     }
   }
 
@@ -383,15 +389,23 @@ class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
     });
     
     try {
-      final allBookings = await _bookingService.getAllBookings();
+      _logger.info('Loading bookings...');
+    final allBookings = await _bookingService.getAllBookings();
+    _logger.info('Loaded ${allBookings.length} bookings');
+    setState(() {
+      _bookings = allBookings;
+      _applyFilters();
+      _isLoading = false;
+    });
+  } catch (e) {
+    _logger.warning('Error loading bookings: $e');
+
       
       if (!mounted) return;
       
-      setState(() {
-        _bookings = allBookings;
-        _applyFilters();
-        _isLoading = false;
-      });
+       _isLoading = false;
+    });
+    
     } catch (e) {
       _logger.warning('Error loading bookings: $e');
       

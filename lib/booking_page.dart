@@ -344,7 +344,7 @@ class _BookingPageState extends State<BookingPage> {
 
     try {
       // Get user ID from CurrentUser
-      final userId = admin.CurrentUser.userId ?? 'unknown';
+      final userId = admin.CurrentUser.uid ?? 'unknown';
       if (userId == 'unknown') {
         _showSnackBar('Error: Not signed in', color: Colors.red);
         setState(() => _isLoading = false);
