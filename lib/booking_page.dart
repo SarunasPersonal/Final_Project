@@ -1,14 +1,14 @@
-// lib/booking_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/models/room_model.dart';
 import 'package:flutter_ucs_app/booking_model.dart';
 import 'package:intl/intl.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class BookingPage extends StatefulWidget {
   final String location;
   
-  const BookingPage(this.location, {Key? key}) : super(key: key);
+  const BookingPage(this.location, {super.key});
 
   @override
   State<BookingPage> createState() => _BookingPageState();
@@ -130,9 +130,12 @@ class _BookingPageState extends State<BookingPage> {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     
+    // Store context for later use
+    final currentContext = context;
+    
     // Show date picker
     final DateTime? pickedDate = await showDatePicker(
-      context: context,
+      context: currentContext,
       initialDate: today,
       firstDate: today,
       lastDate: today.add(const Duration(days: 30)), // Allow booking 30 days ahead
@@ -154,8 +157,8 @@ class _BookingPageState extends State<BookingPage> {
 
     // Show time picker
     final TimeOfDay? pickedTime = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(hour: 9, minute: 0), // Default to 9:00 AM
+      context: currentContext,
+      initialTime: const TimeOfDay(hour: 9, minute: 0), // Default to 9:00 AM
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -183,7 +186,10 @@ class _BookingPageState extends State<BookingPage> {
 
     // Validate time is within operating hours (8:00 AM - 10:00 PM)
     if (pickedTime.hour < 8 || (pickedTime.hour == 22 && pickedTime.minute > 0) || pickedTime.hour > 22) {
-      _showSnackBar('Please select a time between 8:00 AM and 10:00 PM', color: Colors.red);
+      // Using context after checking mounted
+      if (mounted) {
+        _showSnackBar('Please select a time between 8:00 AM and 10:00 PM', color: Colors.red);
+      }
       return;
     }
 
@@ -206,124 +212,118 @@ class _BookingPageState extends State<BookingPage> {
   }
   
   // Check if the selected room is available at the selected time
-  // Corrected version of the _checkRoomAvailability method in booking_page.dart
-
-Future<void> _checkRoomAvailability() async {
-  if (_selectedRoom == null || selectedDateTime == null) return;
-  
-  setState(() {
-    _isLoading = true;
-  });
-  
-  try {
-    // Debug logging using print instead of _logger
-    print("Checking availability for room: ${_selectedRoom!.id}");
-    print("At date/time: ${selectedDateTime!}");
-    print("With duration: $_duration minutes");
+  Future<void> _checkRoomAvailability() async {
+    if (_selectedRoom == null || selectedDateTime == null) return;
     
-    // Use the enhanced version if available
-    final isAvailable = await _bookingService.isRoomAvailableWithDuration(
-      _selectedRoom!.id, 
-      selectedDateTime!,
-      _duration
-    );
+    setState(() {
+      _isLoading = true;
+    });
     
-    print("Room availability result: $isAvailable");
-    
-    if (mounted) {
-      setState(() {
-        _isRoomAvailable = isAvailable;
-        _isLoading = false;
-      });
+    try {
+      // Debug logging using print instead of Logger
+      print("Checking availability for room: ${_selectedRoom!.id}");
+      print("At date/time: ${selectedDateTime!}");
+      print("With duration: $_duration minutes");
       
-      if (!isAvailable) {
-        _showSnackBar(
-          'The room is not available at this time. Please select a different time or room.',
-          color: Colors.red
-        );
-      } else {
-        _showSnackBar('Room is available at selected time', color: Colors.green);
+      // Use the enhanced version if available
+      final isAvailable = await _bookingService.isRoomAvailableWithDuration(
+        _selectedRoom!.id, 
+        selectedDateTime!,
+        _duration
+      );
+      
+      print("Room availability result: $isAvailable");
+      
+      if (mounted) {
+        setState(() {
+          _isRoomAvailable = isAvailable;
+          _isLoading = false;
+        });
+        
+        if (!isAvailable) {
+          _showSnackBar(
+            'The room is not available at this time. Please select a different time or room.',
+            color: Colors.red
+          );
+        } else {
+          _showSnackBar('Room is available at selected time', color: Colors.green);
+        }
+      }
+    } catch (e) {
+      print("Error checking availability: $e");
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          // Default to available in case of error
+          _isRoomAvailable = true;
+        });
+        _showSnackBar('Room availability check completed', color: Colors.green);
       }
     }
-  } catch (e) {
-    print("Error checking availability: $e");
-    if (mounted) {
-      setState(() {
-        _isLoading = false;
-        // Default to available in case of error
-        _isRoomAvailable = true;
-      });
-      _showSnackBar('Room availability check completed', color: Colors.green);
-    }
   }
-}
   
   // Create a booking with the selected options
   Future<void> _createBooking() async {
-     if (_selectedRoom == null || selectedDateTime == null) {
-    _showSnackBar('Please select a room and time for your booking');
-    return;
-  }
-  
-  if (_selectedRoom == null || selectedDateTime == null) {
-    _showSnackBar('Please select a room and time for your booking');
-    return;
-  }
-  
-  if (!_isRoomAvailable) {
-    _showSnackBar('This room is not available at the selected time');
-    return;
-  }
-  
-  setState(() {
-    _isLoading = true;
-  });
-  
-  try {
-    // Get current user information from Firestore
-    String userId = CurrentUser.userId ?? 'user123';
-    String userEmail = CurrentUser.email ?? 'No Email';
-    String userName = 'Unknown User';
-    
-    // Try to get the user's name from Firestore
-    try {
-      DocumentSnapshot userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .get();
-      
-      if (userDoc.exists) {
-        Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
-        userName = userData['name'] ?? 
-                  userData['fullName'] ?? 
-                  userData['firstName'] != null ? 
-                      '${userData['firstName']} ${userData['lastName'] ?? ''}' : 
-                      userEmail.split('@')[0]; // Fallback to first part of email
-      }
-    } catch (e) {
-      print('Error getting user name: $e');
-      // Use default name if there's an error
-      userName = userEmail.split('@')[0];
+    if (_selectedRoom == null || selectedDateTime == null) {
+      _showSnackBar('Please select a room and time for your booking');
+      return;
     }
     
-    // Create a new booking
-    final booking = Booking(
-      location: widget.location,
-      dateTime: selectedDateTime!,
-      userId: userId,
-      userEmail: userEmail,
-      userName: userName.trim(), // Include user name
-      roomType: _selectedRoomType,
-      features: _selectedFeatures,
-      roomId: _selectedRoom!.id,
-      duration: _duration,
-      notes: _notesController.text.isEmpty ? null : _notesController.text,
-    );
+    if (!_isRoomAvailable) {
+      _showSnackBar('This room is not available at the selected time');
+      return;
+    }
     
-    // Add the booking to Firestore
-    final success = await _bookingService.addBooking(booking);
+    setState(() {
+      _isLoading = true;
+    });
     
-    if (mounted) {
+    try {
+      // Get current user information from Firestore
+      String userId = CurrentUser.userId ?? 'user123';
+      String userEmail = CurrentUser.email ?? 'No Email';
+      String userName = 'Unknown User';
+      
+      // Try to get the user's name from Firestore
+      try {
+        DocumentSnapshot userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .get();
+        
+        if (userDoc.exists) {
+          Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+          userName = userData['name'] ?? 
+                   userData['fullName'] ?? 
+                   userData['firstName'] != null ? 
+                       '${userData['firstName']} ${userData['lastName'] ?? ''}' : 
+                       userEmail.split('@')[0]; // Fallback to first part of email
+        }
+      } catch (e) {
+        print('Error getting user name: $e');
+        // Use default name if there's an error
+        userName = userEmail.split('@')[0];
+      }
+      
+      // Create a new booking
+      final booking = Booking(
+        location: widget.location,
+        dateTime: selectedDateTime!,
+        userId: userId,
+        userEmail: userEmail,
+        userName: userName.trim(), // Include user name
+        roomType: _selectedRoomType,
+        features: _selectedFeatures,
+        roomId: _selectedRoom!.id,
+        duration: _duration,
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+      );
+      
+      // Add the booking to Firestore
+      final success = await _bookingService.addBooking(booking);
+      
+      if (!mounted) return;
+      
       setState(() {
         _isLoading = false;
       });
@@ -333,16 +333,15 @@ Future<void> _checkRoomAvailability() async {
       } else {
         _showSnackBar('Failed to create booking', color: Colors.red);
       }
-    }
-  } catch (e) {
-    if (mounted) {
+    } catch (e) {
+      if (!mounted) return;
+      
       setState(() {
         _isLoading = false;
       });
       _showSnackBar('Error creating booking: $e', color: Colors.red);
     }
   }
-}
   
   // Show success dialog after booking
   void _showSuccessDialog() {
@@ -484,7 +483,7 @@ Future<void> _checkRoomAvailability() async {
                 // Loading overlay
                 if (_isLoading)
                   Container(
-                    color: Colors.black.withOpacity(0.3),
+                    color: Colors.black.withAlpha(77),
                     child: const Center(
                       child: CircularProgressIndicator(color: primaryColor),
                     ),
@@ -835,82 +834,81 @@ Future<void> _checkRoomAvailability() async {
   
   // Build duration selection section
   Widget _buildDurationSelection() {
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text(
-        'Booking Duration',
-        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-      ),
-      const SizedBox(height: 16),
-      Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            children: [
-              Text(
-                '$_duration minutes',
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Booking Duration',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              children: [
+                Text(
+                  '$_duration minutes',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              
-              // Duration selection buttons
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                alignment: WrapAlignment.center,
-                children: [
-                  _buildDurationButton(30, '30 min'),
-                  _buildDurationButton(60, '1 hour'),
-                  _buildDurationButton(90, '1.5 hours'),
-                  _buildDurationButton(120, '2 hours'),
-                  _buildDurationButton(180, '3 hours'),
-                  _buildDurationButton(240, '4 hours'),
-                ],
-              ),
-            ],
+                const SizedBox(height: 16),
+                
+                // Duration selection buttons
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    _buildDurationButton(30, '30 min'),
+                    _buildDurationButton(60, '1 hour'),
+                    _buildDurationButton(90, '1.5 hours'),
+                    _buildDurationButton(120, '2 hours'),
+                    _buildDurationButton(180, '3 hours'),
+                    _buildDurationButton(240, '4 hours'),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
-      ),
-    ],
-  );
-}
+      ],
+    );
+  }
 
-// Add this helper method for building duration buttons
-Widget _buildDurationButton(int minutes, String label) {
-  final isSelected = _duration == minutes;
-  
-  return ElevatedButton(
-    onPressed: () {
-      setState(() {
-        _duration = minutes;
-      });
-      
-      // Recheck availability with new duration
-      if (_selectedRoom != null && selectedDateTime != null) {
-        _checkRoomAvailability();
-      }
-    },
-    style: ElevatedButton.styleFrom(
-      backgroundColor: isSelected ? primaryColor : Colors.grey.shade200,
-      foregroundColor: isSelected ? secondaryColor : Colors.black87,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(8),
-        side: BorderSide(
-          color: isSelected ? primaryColor : Colors.transparent,
-          width: 2,
+  Widget _buildDurationButton(int minutes, String label) {
+    final isSelected = _duration == minutes;
+    
+    return ElevatedButton(
+      onPressed: () {
+        setState(() {
+          _duration = minutes;
+        });
+        
+        // Recheck availability with new duration
+        if (_selectedRoom != null && selectedDateTime != null) {
+          _checkRoomAvailability();
+        }
+      },
+      style: ElevatedButton.styleFrom(
+        backgroundColor: isSelected ? primaryColor : Colors.grey.shade200,
+        foregroundColor: isSelected ? secondaryColor : Colors.black87,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(
+            color: isSelected ? primaryColor : Colors.transparent,
+            width: 2,
+          ),
         ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-    ),
-    child: Text(label),
-  );
-}
+      child: Text(label),
+    );
+  }
   
   // Build notes section
   Widget _buildNotesSection() {

@@ -1,843 +1,971 @@
+// lib/booking_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/models/room_model.dart';
+import 'package:flutter_ucs_app/booking_model.dart';
 import 'package:intl/intl.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:logging/logging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // Added missing import
+import 'package:logging/logging.dart'; // Added logging import
 
-enum BookingStatus {
-  pending,
-  confirmed,
-  cancelled,
-  completed;
-
-  String get displayName {
-    switch (this) {
-      case BookingStatus.pending:
-        return 'Pending';
-      case BookingStatus.confirmed:
-        return 'Confirmed';
-      case BookingStatus.cancelled:
-        return 'Cancelled';
-      case BookingStatus.completed:
-        return 'Completed';
-    }
-  }
-
-  Color get color {
-    switch (this) {
-      case BookingStatus.pending:
-        return Colors.orange;
-      case BookingStatus.confirmed:
-        return Colors.green;
-      case BookingStatus.cancelled:
-        return Colors.red;
-      case BookingStatus.completed:
-        return Colors.blue;
-    }
-  }
-
-  static BookingStatus fromString(String status) {
-    switch (status.toLowerCase()) {
-      case 'pending':
-        return BookingStatus.pending;
-      case 'confirmed':
-        return BookingStatus.confirmed;
-      case 'cancelled':
-        return BookingStatus.cancelled;
-      case 'completed':
-        return BookingStatus.completed;
-      default:
-        return BookingStatus.pending;
-    }
-  }
-}
-
-class Booking {
-  final String id;
-  final String userId;
+class BookingPage extends StatefulWidget {
   final String location;
-  final RoomType roomType;
-  final DateTime dateTime;
-  final int duration;
-  final String? notes;
-  final BookingStatus status;
-
-  Booking({
-    required this.id,
-    required this.userId,
-    required this.location,
-    required this.roomType,
-    required this.dateTime,
-    required this.duration,
-    this.notes,
-    this.status = BookingStatus.pending,
-  });
-
-  // Get end time
-  DateTime get endTime => dateTime.add(Duration(minutes: duration));
   
-  // Check if booking is upcoming
-  bool get isUpcoming => dateTime.isAfter(DateTime.now());
-
-  // Create a Booking from a Firestore document
-  factory Booking.fromFirestore(DocumentSnapshot doc) {
-  final data = doc.data() as Map<String, dynamic>? ?? {};
-  
-  return Booking(
-    id: doc.id,
-    userId: data['userId'] ?? 'Unknown',
-    userEmail: data['userEmail'] ?? 'No Email',
-    userName: data['userName'] ?? (data['userEmail'] != null ? 
-               data['userEmail'].toString().split('@')[0] : 'Unknown User'),
-    location: data['location'] ?? 'Unknown',
-    roomType: _parseRoomType(data['roomType']),
-    dateTime: _parseDateTime(data['dateTime']),
-    duration: data['duration'] ?? 60,
-    notes: data['notes'],
-    status: _parseStatus(data['status']),
-  );
-}
-
-  // Helper method to parse room type from string
-  static RoomType _parseRoomType(String? type) {
-    if (type == null) return RoomType.studyRoom;
-    
-    switch (type) {
-      case 'quietRoom': return RoomType.quietRoom;
-      case 'conferenceRoom': return RoomType.conferenceRoom;
-      case 'studyRoom': return RoomType.studyRoom;
-      default: return RoomType.studyRoom;
-    }
-  }
-
-  // Helper method to parse dateTime from Firestore
-  static DateTime _parseDateTime(dynamic timestamp) {
-    if (timestamp is Timestamp) {
-      return timestamp.toDate();
-    } else if (timestamp is String) {
-      try {
-        return DateTime.parse(timestamp);
-      } catch (e) {
-        return DateTime.now();
-      }
-    }
-    return DateTime.now();
-  }
-
-  // Helper method to parse status from string
-  static BookingStatus _parseStatus(String? status) {
-    if (status == null) return BookingStatus.pending;
-    return BookingStatus.fromString(status);
-  }
-
-  // Convert booking to a map for Firestore
-  Map<String, dynamic> toFirestore() {
-    String roomTypeString;
-  switch (roomType) {
-    case RoomType.quietRoom:
-      roomTypeString = 'quietRoom';
-      break;
-    case RoomType.conferenceRoom:
-      roomTypeString = 'conferenceRoom';
-      break;
-    case RoomType.studyRoom:
-      roomTypeString = 'studyRoom';
-      break;
-  }
-
-  return {
-    'userId': userId,
-    'userEmail': userEmail,
-    'userName': userName,
-    'location': location,
-    'roomType': roomTypeString,
-    'dateTime': Timestamp.fromDate(dateTime),
-    'duration': duration,
-    'notes': notes,
-    'status': status.name,
-    'updatedAt': FieldValue.serverTimestamp(),
-  };
-  }
-}
-
-class BookingService {
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final Logger _logger = Logger('BookingService');
-  final String _collectionName = 'bookings';
-
-  // Get all bookings from Firestore
-  Future<List<Booking>> getAllBookings() async {
-    try {
-      // Check if collection exists and create sample data if not
-      bool collectionExists = await _checkCollectionExists();
-      if (!collectionExists) {
-        await _createSampleBookings();
-      }
-      
-      // Get bookings from Firestore, ordered by date/time descending
-      final QuerySnapshot snapshot = await _firestore
-          .collection(_collectionName)
-          .orderBy('dateTime', descending: true)
-          .get();
-      
-      // Convert documents to Booking objects
-      final bookings = snapshot.docs.map((doc) => Booking.fromFirestore(doc)).toList();
-      
-      if (bookings.isEmpty && !(await _checkCollectionExists())) {
-        await _createSampleBookings();
-        
-        // Try fetching again
-        final retrySnapshot = await _firestore
-            .collection(_collectionName)
-            .orderBy('dateTime', descending: true)
-            .get();
-            
-        return retrySnapshot.docs.map((doc) => Booking.fromFirestore(doc)).toList();
-      }
-      
-      return bookings;
-    } catch (e) {
-      _logger.warning('Error fetching bookings: $e');
-      
-      // If Firestore query fails, return mock data
-      bool collectionExists = await _checkCollectionExists();
-      if (!collectionExists) {
-        return _getMockBookings();
-      } else {
-        // Just return an empty list instead of mock data if the collection exists but query failed
-        return [];
-      }
-    }
-  }
-
-  // Check if the bookings collection exists
-  Future<bool> _checkCollectionExists() async {
-    try {
-      final snapshot = await _firestore.collection(_collectionName).limit(1).get();
-      return snapshot.docs.isNotEmpty;
-    } catch (e) {
-      _logger.warning('Error checking if collection exists: $e');
-      return false;
-    }
-  }
-
-  // Delete a booking from Firestore
-  Future<bool> deleteBooking(String bookingId) async {
-    try {
-      await _firestore.collection(_collectionName).doc(bookingId).delete();
-      _logger.info('Deleted booking: $bookingId');
-      return true;
-    } catch (e) {
-      _logger.severe('Error deleting booking: $e');
-      return false;
-    }
-  }
-
-  // Update booking status
-  Future<bool> updateBookingStatus(String bookingId, BookingStatus status) async {
-    try {
-      await _firestore.collection(_collectionName).doc(bookingId).update({
-        'status': status.name,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-      _logger.info('Updated booking status: $bookingId to ${status.name}');
-      return true;
-    } catch (e) {
-      _logger.warning('Error updating booking status: $e');
-      return false;
-    }
-  }
-  
-  // Create sample bookings in Firestore for testing
-  Future<void> _createSampleBookings() async {
-    try {
-      _logger.info('Creating sample bookings...');
-      
-      // Sample room data
-      final rooms = [
-        {'id': 'taunton-quiet-1', 'name': 'Quiet Study Room 1', 'campus': 'Taunton', 'type': RoomType.quietRoom},
-        {'id': 'bridgwater-conference-1', 'name': 'Conference Room A', 'campus': 'Bridgwater', 'type': RoomType.conferenceRoom},
-        {'id': 'cannington-study-1', 'name': 'Study Room 1', 'campus': 'Cannington', 'type': RoomType.studyRoom},
-      ];
-      
-      // Sample users
-      final users = [
-        {'id': 'user1', 'email': 'john.smith@example.com'},
-        {'id': 'user2', 'email': 'jane.doe@example.com'},
-        {'id': 'user3', 'email': 'mike.wilson@example.com'},
-      ];
-      
-      // Get sample bookings
-      final sampleBookings = _getMockBookings();
-      
-      // Add to Firestore
-      final batch = _firestore.batch();
-      
-      for (int i = 0; i < sampleBookings.length; i++) {
-        final booking = sampleBookings[i];
-        final docRef = _firestore.collection(_collectionName).doc('sample-booking-${i+1}');
-        
-        // Create Firestore data
-        final Map<String, dynamic> bookingData = {
-          'userId': booking.userId,
-          'location': booking.location,
-          'roomType': booking.roomType == RoomType.quietRoom 
-              ? 'quietRoom' 
-              : booking.roomType == RoomType.conferenceRoom 
-                  ? 'conferenceRoom' 
-                  : 'studyRoom',
-          'dateTime': Timestamp.fromDate(booking.dateTime),
-          'duration': booking.duration,
-          'notes': booking.notes,
-          'status': booking.status.name,
-          'createdAt': FieldValue.serverTimestamp(),
-        };
-        
-        batch.set(docRef, bookingData);
-      }
-      
-      await batch.commit();
-      _logger.info('Sample bookings created successfully');
-    } catch (e) {
-      _logger.warning('Error creating sample bookings: $e');
-    }
-  }
-  
-  // Get mock bookings for development
-  List<Booking> _getMockBookings() {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    
-    return [
-      Booking(
-        id: '1',
-        userId: 'john.smith@example.com',
-        location: 'Taunton',
-        roomType: RoomType.quietRoom,
-        dateTime: today.add(const Duration(days: 1, hours: 10)),
-        duration: 60,
-        notes: 'Quiet study session',
-      ),
-      Booking(
-        id: '2',
-        userId: 'jane.doe@example.com',
-        location: 'Bridgwater',
-        roomType: RoomType.conferenceRoom,
-        dateTime: today.add(const Duration(days: 2, hours: 14)),
-        duration: 120,
-        notes: 'Team meeting',
-        status: BookingStatus.confirmed,
-      ),
-      Booking(
-        id: '3',
-        userId: 'mike.wilson@example.com',
-        location: 'Cannington',
-        roomType: RoomType.studyRoom,
-        dateTime: today.subtract(const Duration(days: 1, hours: 9)),
-        duration: 90,
-        status: BookingStatus.completed,
-      ),
-      Booking(
-        id: '4',
-        userId: 'sarah.johnson@example.com',
-        location: 'Bridgwater',
-        roomType: RoomType.quietRoom,
-        dateTime: today.add(const Duration(days: 3, hours: 15, minutes: 30)),
-        duration: 60,
-        status: BookingStatus.pending,
-      ),
-      Booking(
-        id: '5',
-        userId: 'david.brown@example.com',
-        location: 'Taunton',
-        roomType: RoomType.conferenceRoom,
-        dateTime: today.add(const Duration(days: 1, hours: 13)),
-        duration: 180,
-        notes: 'Presentation preparation',
-        status: BookingStatus.cancelled,
-      ),
-    ];
-  }
-}
-
-class BookingsManagementScreen extends StatefulWidget {
-  const BookingsManagementScreen({super.key});
+  const BookingPage(this.location, {super.key}); // Fixed super parameter
 
   @override
-  State<BookingsManagementScreen> createState() => _BookingsManagementScreenState();
+  State<BookingPage> createState() => _BookingPageState();
 }
 
-class _BookingsManagementScreenState extends State<BookingsManagementScreen> {
+class _BookingPageState extends State<BookingPage> {
+  // Services
+  final RoomService _roomService = RoomService();
   final BookingService _bookingService = BookingService();
-  final Logger _logger = Logger('BookingsManagementScreen');
-  List<Booking> _bookings = [];
-  List<Booking> _filteredBookings = [];
-  String _searchQuery = '';
-  String _filterLocation = 'All Locations';
-  RoomType? _filterRoomType;
-  BookingStatus? _filterStatus;
-  bool _isLoading = true;
-
+  final Logger _logger = Logger('BookingPage'); // Added Logger instance
+  
+  // State variables
+  DateTime? selectedDateTime;
+  String? formattedDateTime;
+  bool _isLoading = false;
+  bool _isLoadingRooms = true;
+  bool _isRoomAvailable = true;
+  
+  // Room selection
+  RoomType _selectedRoomType = RoomType.studyRoom;
+  Room? _selectedRoom;
+  List<Room> _availableRooms = [];
+  List<RoomFeature> _selectedFeatures = [];
+  
+  // Booking details
+  int _duration = 60;
+  final TextEditingController _notesController = TextEditingController();
+  
   @override
   void initState() {
     super.initState();
-    _loadBookings();
+    _loadRooms();
   }
-
-  Future<void> _loadBookings() async {
-    if (!mounted) return;
-    
+  
+  @override
+  void dispose() {
+    _notesController.dispose();
+    super.dispose();
+  }
+  
+  // Load available rooms for the selected campus
+  Future<void> _loadRooms() async {
     setState(() {
-      _isLoading = true;
+      _isLoadingRooms = true;
     });
     
     try {
-      _logger.info('Loading bookings...');
-      final allBookings = await _bookingService.getAllBookings();
-      _logger.info('Loaded ${allBookings.length} bookings');
+      final rooms = await _roomService.getRoomsByCampus(widget.location);
       
-      if (!mounted) return;
-      
-      setState(() {
-        _bookings = allBookings;
-        _applyFilters();
-        _isLoading = false;
-      });
-    } catch (e) {
-      _logger.warning('Error loading bookings: $e');
-      
-      if (!mounted) return;
-      
-      setState(() {
-        _isLoading = false;
-      });
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading bookings: $e')),
-      );
-    }
-  }
-
-  void _applyFilters() {
-    setState(() {
-      _filteredBookings = _bookings.where((booking) {
-        // Apply location filter
-        if (_filterLocation != 'All Locations' &&
-            booking.location != _filterLocation) {
-          return false;
-        }
-
-        // Apply room type filter
-        if (_filterRoomType != null && booking.roomType != _filterRoomType) {
-          return false;
-        }
-        
-        // Apply status filter
-        if (_filterStatus != null && booking.status != _filterStatus) {
-          return false;
-        }
-
-        // Apply search query (check if query exists in location, room type, or user ID)
-        if (_searchQuery.isNotEmpty) {
-          final query = _searchQuery.toLowerCase();
-          return booking.location.toLowerCase().contains(query) ||
-              booking.roomType.displayName.toLowerCase().contains(query) ||
-              booking.userId.toLowerCase().contains(query);
-        }
-
-        return true;
-      }).toList();
-    });
-  }
-
-  Future<void> _deleteBooking(Booking booking) async {
-    final bool isConfirmed = await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirm Deletion'),
-        content: const Text('Are you sure you want to delete this booking?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    ) ?? false;
-    
-    if (!isConfirmed || !mounted) return;
-              
-    setState(() {
-      _isLoading = true;
-    });
-    
-    try {
-      final success = await _bookingService.deleteBooking(booking.id);
-      
-      if (!mounted) return;
-      
-      if (success) {
-        await _loadBookings();  // Reload bookings after deletion
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Booking deleted successfully')),
-        );
-      } else {
+      if (mounted) {
         setState(() {
-          _isLoading = false;
+          _availableRooms = rooms.where((room) => room.isAvailable).toList();
+          _isLoadingRooms = false;
         });
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to delete booking')),
-        );
       }
     } catch (e) {
-      _logger.warning('Error deleting booking: $e');
-      
-      if (!mounted) return;
-      
-      setState(() {
-        _isLoading = false;
-      });
-      
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error deleting booking: $e')),
-      );
+      if (mounted) {
+        setState(() {
+          _isLoadingRooms = false;
+        });
+        _showSnackBar('Error loading rooms: $e');
+      }
     }
   }
   
-  Future<void> _updateBookingStatus(Booking booking, BookingStatus newStatus) async {
+  // Filter rooms by selected type
+  void _filterRoomsByType(RoomType type) {
+    setState(() {
+      _selectedRoomType = type;
+      _selectedRoom = null; // Reset room selection
+      _selectedFeatures = []; // Reset selected features
+    });
+    
+    _loadRoomsByType(type);
+  }
+  
+  // Load rooms for a specific type
+  Future<void> _loadRoomsByType(RoomType type) async {
+    setState(() {
+      _isLoadingRooms = true;
+    });
+    
+    try {
+      final campusRooms = await _roomService.getRoomsByCampus(widget.location);
+      
+      if (mounted) {
+        setState(() {
+          _availableRooms = campusRooms.where((room) => 
+            room.type == type && room.isAvailable
+          ).toList();
+          _isLoadingRooms = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingRooms = false;
+        });
+        _showSnackBar('Error loading rooms: $e');
+      }
+    }
+  }
+  
+  // Select a room and its features
+  void _selectRoom(Room room) {
+    setState(() {
+      _selectedRoom = room;
+      _selectedFeatures = List.from(room.features);
+    });
+    
+    // Check availability if date is already selected
+    if (selectedDateTime != null) {
+      _checkRoomAvailability();
+    }
+  }
+  
+  // Select date and time for booking
+  Future<void> _selectDateTime(BuildContext context) async {
+    // Get today's date
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    
+    // Store context for later use
+    final currentContext = context;
+    
+    // Show date picker
+    final DateTime? pickedDate = await showDatePicker(
+      context: currentContext,
+      initialDate: today,
+      firstDate: today,
+      lastDate: today.add(const Duration(days: 30)), // Allow booking 30 days ahead
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: primaryColor,
+              onPrimary: secondaryColor,
+              onSurface: primaryColor,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (!mounted || pickedDate == null) return;
+
+    // Show time picker
+    final TimeOfDay? pickedTime = await showTimePicker(
+      context: currentContext,
+      initialTime: const TimeOfDay(hour: 9, minute: 0), // Default to 9:00 AM
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: primaryColor,
+              onPrimary: secondaryColor,
+              onSurface: primaryColor,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (!mounted || pickedTime == null) return;
+
+    // Create full DateTime
+    final newDateTime = DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+      pickedTime.hour,
+      pickedTime.minute,
+    );
+
+    // Validate time is within operating hours (8:00 AM - 10:00 PM)
+    if (pickedTime.hour < 8 || (pickedTime.hour == 22 && pickedTime.minute > 0) || pickedTime.hour > 22) {
+      // Using context after checking mounted
+      if (mounted) {
+        _showSnackBar('Please select a time between 8:00 AM and 10:00 PM', color: Colors.red);
+      }
+      return;
+    }
+
+    setState(() {
+      selectedDateTime = newDateTime;
+      formattedDateTime = _formatDateTime(newDateTime);
+    });
+
+    // Check room availability if a room is selected
+    if (_selectedRoom != null) {
+      _checkRoomAvailability();
+    }
+  }
+  
+  // Format DateTime to readable string
+  String _formatDateTime(DateTime dateTime) {
+    final dateFormat = DateFormat('EEEE, MMMM d, yyyy');
+    final timeFormat = DateFormat('h:mm a');
+    return '${dateFormat.format(dateTime)} at ${timeFormat.format(dateTime)}';
+  }
+  
+  // Check if the selected room is available at the selected time
+  Future<void> _checkRoomAvailability() async {
+    if (_selectedRoom == null || selectedDateTime == null) return;
+    
     setState(() {
       _isLoading = true;
     });
     
     try {
-      final success = await _bookingService.updateBookingStatus(booking.id, newStatus);
+      // Using class logger
+      _logger.info("Checking availability for room: ${_selectedRoom!.id}");
+      _logger.info("At date/time: ${selectedDateTime!}");
+      _logger.info("With duration: $_duration minutes");
       
-      if (!mounted) return;
+      // Use the enhanced version if available
+      final isAvailable = await _bookingService.isRoomAvailableWithDuration(
+        _selectedRoom!.id, 
+        selectedDateTime!,
+        _duration
+      );
       
-      if (success) {
-        await _loadBookings();  // Reload bookings after update
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Booking status updated to ${newStatus.displayName}')),
-        );
-      } else {
+      _logger.info("Room availability result: $isAvailable");
+      
+      if (mounted) {
         setState(() {
+          _isRoomAvailable = isAvailable;
           _isLoading = false;
         });
         
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Failed to update booking status')),
-        );
+        if (!isAvailable) {
+          _showSnackBar(
+            'The room is not available at this time. Please select a different time or room.',
+            color: Colors.red
+          );
+        } else {
+          _showSnackBar('Room is available at selected time', color: Colors.green);
+        }
       }
     } catch (e) {
-      _logger.warning('Error updating booking status: $e');
+      _logger.warning("Error checking availability: $e");
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          // Default to available in case of error
+          _isRoomAvailable = true;
+        });
+        _showSnackBar('Room availability check completed', color: Colors.green);
+      }
+    }
+  }
+  
+  // Create a booking with the selected options
+  Future<void> _createBooking() async {
+    if (_selectedRoom == null || selectedDateTime == null) {
+      _showSnackBar('Please select a room and time for your booking');
+      return;
+    }
+    
+    if (!_isRoomAvailable) {
+      _showSnackBar('This room is not available at the selected time');
+      return;
+    }
+    
+    setState(() {
+      _isLoading = true;
+    });
+    
+    try {
+      // Get current user information from Firestore
+      String userId = CurrentUser.userId ?? 'user123';
+      String userEmail = CurrentUser.email ?? 'No Email';
+      String userName = 'Unknown User';
       
+              // Try to get the user's name from Firestore
+      try {
+        DocumentSnapshot userDoc = await FirebaseFirestore.instance
+            .collection('users')
+            .doc(userId)
+            .get();
+        
+        if (userDoc.exists) {
+          Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+          userName = userData['name'] ?? 
+                   userData['fullName'] ?? 
+                   userData['firstName'] != null ? 
+                       '${userData['firstName']} ${userData['lastName'] ?? ''}' : 
+                       userEmail.split('@')[0]; // Fallback to first part of email
+        }
+      } catch (e) {
+        _logger.warning('Error getting user name: $e');
+        // Use default name if there's an error
+        userName = userEmail.split('@')[0];
+      }
+      
+      // Create a new booking
+      final booking = Booking(
+        location: widget.location,
+        dateTime: selectedDateTime!,
+        userId: userId,
+        userEmail: userEmail,
+        userName: userName.trim(), // Include user name
+        roomType: _selectedRoomType,
+        features: _selectedFeatures,
+        roomId: _selectedRoom!.id,
+        duration: _duration,
+        notes: _notesController.text.isEmpty ? null : _notesController.text,
+      );
+      
+      // Add the booking to Firestore
+      final success = await _bookingService.addBooking(booking);
+      
+      // Check if widget is still mounted before updating state
       if (!mounted) return;
       
       setState(() {
         _isLoading = false;
       });
       
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error updating booking status: $e')),
-      );
+      if (success) {
+        _showSuccessDialog();
+      } else {
+        _showSnackBar('Failed to create booking', color: Colors.red);
+      }
+    } catch (e) {
+      // Check if widget is still mounted before updating state
+      if (!mounted) return;
+      
+      setState(() {
+        _isLoading = false;
+      });
+      _showSnackBar('Error creating booking: $e', color: Colors.red);
     }
+  }
+  
+  // Show success dialog after booking
+  void _showSuccessDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Booking Confirmed', style: TextStyle(color: primaryColor)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.check_circle, color: Colors.green, size: 64),
+            const SizedBox(height: 16),
+            const Text(
+              'Your booking has been successfully created!',
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Room: ${_selectedRoom!.name}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            Text(
+              'Date & Time: $formattedDateTime',
+            ),
+            Text(
+              'Duration: $_duration minutes',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // Close dialog
+              Navigator.pop(context); // Return to previous screen
+            },
+            child: const Text('Return to Home'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: primaryColor),
+            onPressed: () {
+              Navigator.pop(context);
+              // Reset form for a new booking
+              setState(() {
+                selectedDateTime = null;
+                formattedDateTime = null;
+                _selectedRoom = null;
+                _duration = 60;
+                _notesController.clear();
+              });
+            },
+            child: const Text('Make Another Booking', style: TextStyle(color: secondaryColor)),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  // Show a snackbar message
+  void _showSnackBar(String message, {Color color = Colors.black}) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Manage Bookings',
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  color: primaryColor,
-                  fontWeight: FontWeight.bold,
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: primaryColor),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: Text(
+          'Book a Room at ${widget.location}',
+          style: const TextStyle(color: primaryColor),
+        ),
+      ),
+      body: _isLoadingRooms
+          ? const Center(child: CircularProgressIndicator(color: primaryColor))
+          : Stack(
+              children: [
+                SingleChildScrollView(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Campus information
+                      _buildCampusInfo(),
+                      
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      
+                      // Room type selection
+                      _buildRoomTypeSection(),
+                      
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      
+                      // Room selection
+                      _buildRoomSelection(),
+                      
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      
+                      // Date and time selection
+                      _buildDateTimeSelection(),
+                      
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      
+                      // Duration selection
+                      _buildDurationSelection(),
+                      
+                      const SizedBox(height: 24),
+                      const Divider(),
+                      
+                      // Notes
+                      _buildNotesSection(),
+                      
+                      const SizedBox(height: 32),
+                      
+                      // Booking button
+                      _buildBookingButton(),
+                      
+                      const SizedBox(height: 40),
+                    ],
+                  ),
                 ),
-          ),
-          const SizedBox(height: 24),
-
-          // Filters and controls
-          Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            alignment: WrapAlignment.start,
-            children: [
-              // Search field
-              SizedBox(
-                width: 300,
-                child: TextField(
-                  decoration: const InputDecoration(
-                    hintText: 'Search by location, room, or user...',
-                    prefixIcon: Icon(Icons.search),
-                    border: OutlineInputBorder(),
-                  ),
-                  onChanged: (value) {
-                    setState(() {
-                      _searchQuery = value;
-                    });
-                    _applyFilters();
-                  },
-                ),
-              ),
-              
-              // Location filter
-              DropdownButton<String>(
-                value: _filterLocation,
-                items: [
-                  'All Locations',
-                  'Taunton',
-                  'Bridgwater',
-                  'Cannington',
-                ].map((location) {
-                  return DropdownMenuItem<String>(
-                    value: location,
-                    child: Text(location),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  setState(() {
-                    _filterLocation = value!;
-                  });
-                  _applyFilters();
-                },
-              ),
-              
-              // Room type filter
-              DropdownButton<RoomType?>(
-                value: _filterRoomType,
-                hint: const Text('Room Type'),
-                items: [
-                  const DropdownMenuItem<RoomType?>(
-                    value: null,
-                    child: Text('All Room Types'),
-                  ),
-                  ...RoomType.values.map((type) {
-                    return DropdownMenuItem<RoomType?>(
-                      value: type,
-                      child: Text(type.displayName),
-                    );
-                  }),
-                ],
-                onChanged: (value) {
-                  setState(() {
-                    _filterRoomType = value;
-                  });
-                  _applyFilters();
-                },
-              ),
-              
-              // Status filter
-              DropdownButton<BookingStatus?>(
-                value: _filterStatus,
-                hint: const Text('Status'),
-                items: [
-                  const DropdownMenuItem<BookingStatus?>(
-                    value: null,
-                    child: Text('All Statuses'),
-                  ),
-                  ...BookingStatus.values.map((status) {
-                    return DropdownMenuItem<BookingStatus?>(
-                      value: status,
-                      child: Text(status.displayName),
-                    );
-                  }),
-                ],
-                onChanged: (value) {
-                  setState(() {
-                    _filterStatus = value;
-                  });
-                  _applyFilters();
-                },
-              ),
-              
-              // Refresh button
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                tooltip: 'Refresh',
-                onPressed: _loadBookings,
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-
-          // Bookings table
-          Expanded(
-            child: _isLoading 
-              ? const Center(child: CircularProgressIndicator(color: primaryColor))
-              : _filteredBookings.isEmpty
-                ? const Center(child: Text('No bookings found'))
-                : SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: DataTable(
-                      columns: const [
-                        DataColumn(label: Text('ID')),
-                        DataColumn(label: Text('Location')),
-                        DataColumn(label: Text('Room Type')),
-                        DataColumn(label: Text('Date & Time')),
-                        DataColumn(label: Text('User')),
-                        DataColumn(label: Text('Status')),
-                        DataColumn(label: Text('Actions')),
-                      ],
-                      rows: _filteredBookings.map((booking) {
-                        final isUpcoming = booking.dateTime.isAfter(DateTime.now());
-                        return DataRow(
-                          cells: [
-                            DataCell(Text(booking.id.length > 8 
-                                ? booking.id.substring(0, 8) + '...' 
-                                : booking.id)),
-                            DataCell(Text(booking.location)),
-                            DataCell(
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(booking.roomType.icon, size: 16),
-                                  const SizedBox(width: 4),
-                                  Text(booking.roomType.displayName),
-                                ],
-                              ),
-                            ),
-                            DataCell(Text(DateFormat('MMM d, y HH:mm')
-                                .format(booking.dateTime))),
-                            DataCell(Text(booking.userId)),
-                            DataCell(
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: booking.status.color.withAlpha(50),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  booking.status.displayName,
-                                  style: TextStyle(
-                                    color: booking.status.color,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            DataCell(
-                              Row(
-                                children: [
-                                  // View details button
-                                  IconButton(
-                                    icon: const Icon(Icons.visibility,
-                                        color: primaryColor),
-                                    onPressed: () => _showBookingDetails(booking),
-                                    tooltip: 'View Details',
-                                  ),
-                                  
-                                  // Status update menu
-                                  if (isUpcoming)
-                                    PopupMenuButton<BookingStatus>(
-                                      tooltip: 'Update Status',
-                                      icon: const Icon(Icons.edit_note, color: Colors.amber),
-                                      onSelected: (BookingStatus status) {
-                                        _updateBookingStatus(booking, status);
-                                      },
-                                      itemBuilder: (BuildContext context) {
-                                        return [
-                                          const PopupMenuItem<BookingStatus>(
-                                            value: BookingStatus.confirmed,
-                                            child: Text('Confirm'),
-                                          ),
-                                          const PopupMenuItem<BookingStatus>(
-                                            value: BookingStatus.cancelled,
-                                            child: Text('Cancel'),
-                                          ),
-                                          const PopupMenuItem<BookingStatus>(
-                                            value: BookingStatus.pending,
-                                            child: Text('Set to Pending'),
-                                          ),
-                                        ];
-                                      },
-                                    ),
-                                  
-                                  // Delete button
-                                  IconButton(
-                                    icon: const Icon(Icons.delete,
-                                        color: Colors.red),
-                                    onPressed: () => _deleteBooking(booking),
-                                    tooltip: 'Delete',
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        );
-                      }).toList(),
+                
+                // Loading overlay
+                if (_isLoading)
+                  Container(
+                    color: Colors.black.withAlpha(77), // Using withAlpha instead
+                    child: const Center(
+                      child: CircularProgressIndicator(color: primaryColor),
                     ),
                   ),
-          ),
-        ],
-      ),
+              ],
+            ),
     );
   }
   
-  void _showBookingDetails(Booking booking) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Booking Details'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildDetailRow('Booking ID', booking.id),
-              _buildDetailRow('Location', booking.location),
-              _buildDetailRow('Room Type', booking.roomType.displayName),
-              _buildDetailRow('Date & Time', DateFormat('MMMM d, y HH:mm').format(booking.dateTime)),
-              _buildDetailRow('Duration', '${booking.duration} minutes'),
-              _buildDetailRow('End Time', DateFormat('MMMM d, y HH:mm').format(booking.endTime)),
-              _buildDetailRow('Status', booking.status.displayName),
-              _buildDetailRow('User ID', booking.userId),
-              if (booking.notes != null && booking.notes!.isNotEmpty)
-                _buildDetailRow('Notes', booking.notes!),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
-  }
-  
-  Widget _buildDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              '$label:',
-              style: const TextStyle(
+  // Build campus information section
+  Widget _buildCampusInfo() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '${widget.location} Campus',
+          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                color: primaryColor,
                 fontWeight: FontWeight.bold,
               ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Select your room preferences and booking time',
+          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                color: Colors.grey,
+              ),
+        ),
+      ],
+    );
+  }
+  
+  // Build room type selection section
+  Widget _buildRoomTypeSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Room Type',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: RoomType.values.map((type) {
+            final isSelected = _selectedRoomType == type;
+            return Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                child: GestureDetector(
+                  onTap: () => _filterRoomsByType(type),
+                  child: Card(
+                    elevation: isSelected ? 4 : 1,
+                    color: isSelected ? primaryColor.withAlpha(26) : null, // Using withAlpha instead
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(
+                        color: isSelected ? primaryColor : Colors.grey.shade300,
+                        width: isSelected ? 2 : 1,
+                      ),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        children: [
+                          Icon(
+                            type.icon,
+                            color: isSelected ? primaryColor : Colors.grey,
+                            size: 32,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            type.displayName,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: isSelected ? primaryColor : null,
+                              fontWeight: isSelected ? FontWeight.bold : null,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+  
+  // Build room selection section
+  Widget _buildRoomSelection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Select a Room',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 16),
+        
+        if (_availableRooms.isEmpty)
+          Center(
+            child: Column(
+              children: [
+                const Icon(Icons.meeting_room_outlined, size: 64, color: Colors.grey),
+                const SizedBox(height: 16),
+                Text(
+                  'No ${_selectedRoomType.displayName}s Available',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Please select a different room type or try another campus.',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          )
+        else
+          ...(_availableRooms.map((room) {
+            final isSelected = _selectedRoom?.id == room.id;
+            return Card(
+              margin: const EdgeInsets.only(bottom: 12),
+              elevation: isSelected ? 4 : 1,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                  color: isSelected ? primaryColor : Colors.transparent,
+                  width: 2,
+                ),
+              ),
+              child: InkWell(
+                onTap: () => _selectRoom(room),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: primaryColor.withAlpha(26), // Using withAlpha instead
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(
+                              room.type.icon,
+                              color: primaryColor,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  room.name,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                if (room.location != null)
+                                  Text(
+                                    room.location!,
+                                    style: const TextStyle(
+                                      color: Colors.grey,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Row(
+                                children: [
+                                  const Icon(Icons.people, size: 16),
+                                  const SizedBox(width: 4),
+                                  Text('Capacity: ${room.capacity}'),
+                                ],
+                              ),
+                              if (isSelected)
+                                const Chip(
+                                  label: Text('Selected'),
+                                  backgroundColor: primaryColor,
+                                  labelStyle: TextStyle(color: secondaryColor),
+                                  padding: EdgeInsets.symmetric(horizontal: 8),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      if (room.features.isNotEmpty) ...[
+                        const Text('Features:', style: TextStyle(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: room.features.map((feature) {
+                            return Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    feature.icon,
+                                    size: 14,
+                                    color: Colors.grey.shade700,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    feature.displayName,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ],
+                      if (room.notes != null) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Notes: ${room.notes}',
+                          style: const TextStyle(fontStyle: FontStyle.italic),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            );
+          })),
+      ],
+    );
+  }
+  
+  // Build date and time selection section
+  Widget _buildDateTimeSelection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Select Date & Time',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              children: [
+                // Currently selected date/time display
+                if (formattedDateTime != null)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: primaryColor.withAlpha(26), // Using withAlpha instead
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: primaryColor),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.event, color: primaryColor),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            formattedDateTime!,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: primaryColor,
+                            ),
+                          ),
+                        ),
+                        if (_selectedRoom != null) ...[
+                          if (_isRoomAvailable)
+                            const Chip(
+                              label: Text('Available'),
+                              backgroundColor: Colors.green,
+                              labelStyle: TextStyle(color: Colors.white),
+                            )
+                          else
+                            const Chip(
+                              label: Text('Unavailable'),
+                              backgroundColor: Colors.red,
+                              labelStyle: TextStyle(color: Colors.white),
+                            ),
+                        ],
+                      ],
+                    ),
+                  )
+                else
+                  const Text(
+                    'No date/time selected',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: () => _selectDateTime(context),
+                  icon: const Icon(Icons.calendar_today),
+                  label: Text(
+                    formattedDateTime == null
+                        ? 'Choose Date & Time'
+                        : 'Change Date & Time',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryColor,
+                    foregroundColor: secondaryColor,
+                    minimumSize: const Size(double.infinity, 50),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Operating Hours: 8:00 AM - 10:00 PM',
+                  style: TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+              ],
             ),
           ),
-          Expanded(
-            child: Text(value),
+        ),
+      ],
+    );
+  }
+  
+  // Build duration selection section
+  Widget _buildDurationSelection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Booking Duration',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              children: [
+                Text(
+                  '$_duration minutes',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 18,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                
+                // Duration selection buttons
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    _buildDurationButton(30, '30 min'),
+                    _buildDurationButton(60, '1 hour'),
+                    _buildDurationButton(90, '1.5 hours'),
+                    _buildDurationButton(120, '2 hours'),
+                    _buildDurationButton(180, '3 hours'),
+                    _buildDurationButton(240, '4 hours'),
+                  ],
+                ),
+              ],
+            ),
           ),
-        ],
+        ),
+      ],
+    );
+  }
+
+  // Add this helper method for building duration buttons
+  Widget _buildDurationButton(int minutes, String label) {
+    final isSelected = _duration == minutes;
+    
+    return ElevatedButton(
+      onPressed: () {
+        setState(() {
+          _duration = minutes;
+        });
+        
+        // Recheck availability with new duration
+        if (_selectedRoom != null && selectedDateTime != null) {
+          _checkRoomAvailability();
+        }
+      },
+      style: ElevatedButton.styleFrom(
+        backgroundColor: isSelected ? primaryColor : Colors.grey.shade200,
+        foregroundColor: isSelected ? secondaryColor : Colors.black87,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(
+            color: isSelected ? primaryColor : Colors.transparent,
+            width: 2,
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      ),
+      child: Text(label),
+    );
+  }
+  
+  // Build notes section
+  Widget _buildNotesSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Additional Notes (Optional)',
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+        ),
+        const SizedBox(height: 16),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: TextField(
+              controller: _notesController,
+              decoration: const InputDecoration(
+                hintText: 'Add any special requests or notes here...',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+  
+  // Build booking button
+  Widget _buildBookingButton() {
+    final isFormComplete = _selectedRoom != null && 
+                           selectedDateTime != null && 
+                           _isRoomAvailable;
+    
+    return ElevatedButton(
+      onPressed: isFormComplete ? _createBooking : null,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: primaryColor,
+        foregroundColor: secondaryColor,
+        minimumSize: const Size(double.infinity, 50),
+        disabledBackgroundColor: Colors.grey,
+        padding: const EdgeInsets.symmetric(vertical: 16),
+      ),
+      child: Text(
+        'Create Booking',
+        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+          color: secondaryColor,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
   }
