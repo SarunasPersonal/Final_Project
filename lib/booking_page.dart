@@ -260,56 +260,89 @@ Future<void> _checkRoomAvailability() async {
   
   // Create a booking with the selected options
   Future<void> _createBooking() async {
-    if (_selectedRoom == null || selectedDateTime == null) {
-      _showSnackBar('Please select a room and time for your booking');
-      return;
-    }
+     if (_selectedRoom == null || selectedDateTime == null) {
+    _showSnackBar('Please select a room and time for your booking');
+    return;
+  }
+  
+  if (_selectedRoom == null || selectedDateTime == null) {
+    _showSnackBar('Please select a room and time for your booking');
+    return;
+  }
+  
+  if (!_isRoomAvailable) {
+    _showSnackBar('This room is not available at the selected time');
+    return;
+  }
+  
+  setState(() {
+    _isLoading = true;
+  });
+  
+  try {
+    // Get current user information from Firestore
+    String userId = CurrentUser.userId ?? 'user123';
+    String userEmail = CurrentUser.email ?? 'No Email';
+    String userName = 'Unknown User';
     
-    if (!_isRoomAvailable) {
-      _showSnackBar('This room is not available at the selected time');
-      return;
-    }
-    
-    setState(() {
-      _isLoading = true;
-    });
-    
+    // Try to get the user's name from Firestore
     try {
-      // Create a new booking
-      final booking = Booking(
-        location: widget.location,
-        dateTime: selectedDateTime!,
-        userId: CurrentUser.userId ?? 'user123', // Use current user or default
-        roomType: _selectedRoomType,
-        features: _selectedFeatures,
-        roomId: _selectedRoom!.id,
-        duration: _duration,
-        notes: _notesController.text.isEmpty ? null : _notesController.text,
-      );
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userId)
+          .get();
       
-      // Add the booking to Firestore
-      final success = await _bookingService.addBooking(booking);
-      
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        
-        if (success) {
-          _showSuccessDialog();
-        } else {
-          _showSnackBar('Failed to create booking', color: Colors.red);
-        }
+      if (userDoc.exists) {
+        Map<String, dynamic> userData = userDoc.data() as Map<String, dynamic>;
+        userName = userData['name'] ?? 
+                  userData['fullName'] ?? 
+                  userData['firstName'] != null ? 
+                      '${userData['firstName']} ${userData['lastName'] ?? ''}' : 
+                      userEmail.split('@')[0]; // Fallback to first part of email
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-        _showSnackBar('Error creating booking: $e', color: Colors.red);
+      print('Error getting user name: $e');
+      // Use default name if there's an error
+      userName = userEmail.split('@')[0];
+    }
+    
+    // Create a new booking
+    final booking = Booking(
+      location: widget.location,
+      dateTime: selectedDateTime!,
+      userId: userId,
+      userEmail: userEmail,
+      userName: userName.trim(), // Include user name
+      roomType: _selectedRoomType,
+      features: _selectedFeatures,
+      roomId: _selectedRoom!.id,
+      duration: _duration,
+      notes: _notesController.text.isEmpty ? null : _notesController.text,
+    );
+    
+    // Add the booking to Firestore
+    final success = await _bookingService.addBooking(booking);
+    
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+      
+      if (success) {
+        _showSuccessDialog();
+      } else {
+        _showSnackBar('Failed to create booking', color: Colors.red);
       }
     }
+  } catch (e) {
+    if (mounted) {
+      setState(() {
+        _isLoading = false;
+      });
+      _showSnackBar('Error creating booking: $e', color: Colors.red);
+    }
   }
+}
   
   // Show success dialog after booking
   void _showSuccessDialog() {

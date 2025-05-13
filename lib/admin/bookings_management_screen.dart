@@ -82,19 +82,22 @@ class Booking {
 
   // Create a Booking from a Firestore document
   factory Booking.fromFirestore(DocumentSnapshot doc) {
-    final data = doc.data() as Map<String, dynamic>? ?? {};
-    
-    return Booking(
-      id: doc.id,
-      userId: data['userId'] ?? 'Unknown',
-      location: data['location'] ?? 'Unknown',
-      roomType: _parseRoomType(data['roomType']),
-      dateTime: _parseDateTime(data['dateTime']),
-      duration: data['duration'] ?? 60,
-      notes: data['notes'],
-      status: _parseStatus(data['status']),
-    );
-  }
+  final data = doc.data() as Map<String, dynamic>? ?? {};
+  
+  return Booking(
+    id: doc.id,
+    userId: data['userId'] ?? 'Unknown',
+    userEmail: data['userEmail'] ?? 'No Email',
+    userName: data['userName'] ?? (data['userEmail'] != null ? 
+               data['userEmail'].toString().split('@')[0] : 'Unknown User'),
+    location: data['location'] ?? 'Unknown',
+    roomType: _parseRoomType(data['roomType']),
+    dateTime: _parseDateTime(data['dateTime']),
+    duration: data['duration'] ?? 60,
+    notes: data['notes'],
+    status: _parseStatus(data['status']),
+  );
+}
 
   // Helper method to parse room type from string
   static RoomType _parseRoomType(String? type) {
@@ -131,28 +134,30 @@ class Booking {
   // Convert booking to a map for Firestore
   Map<String, dynamic> toFirestore() {
     String roomTypeString;
-    switch (roomType) {
-      case RoomType.quietRoom:
-        roomTypeString = 'quietRoom';
-        break;
-      case RoomType.conferenceRoom:
-        roomTypeString = 'conferenceRoom';
-        break;
-      case RoomType.studyRoom:
-        roomTypeString = 'studyRoom';
-        break;
-    }
+  switch (roomType) {
+    case RoomType.quietRoom:
+      roomTypeString = 'quietRoom';
+      break;
+    case RoomType.conferenceRoom:
+      roomTypeString = 'conferenceRoom';
+      break;
+    case RoomType.studyRoom:
+      roomTypeString = 'studyRoom';
+      break;
+  }
 
-    return {
-      'userId': userId,
-      'location': location,
-      'roomType': roomTypeString,
-      'dateTime': Timestamp.fromDate(dateTime),
-      'duration': duration,
-      'notes': notes,
-      'status': status.name,
-      'updatedAt': FieldValue.serverTimestamp(),
-    };
+  return {
+    'userId': userId,
+    'userEmail': userEmail,
+    'userName': userName,
+    'location': location,
+    'roomType': roomTypeString,
+    'dateTime': Timestamp.fromDate(dateTime),
+    'duration': duration,
+    'notes': notes,
+    'status': status.name,
+    'updatedAt': FieldValue.serverTimestamp(),
+  };
   }
 }
 

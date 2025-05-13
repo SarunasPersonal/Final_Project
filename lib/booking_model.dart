@@ -9,6 +9,8 @@ class Booking {
   final String location;
   final DateTime dateTime;
   final String userId;
+  final String userEmail; // Add this field
+  final String userName;  // Add this field
   final RoomType roomType;
   final List<RoomFeature> features;
   final String? roomId;
@@ -18,9 +20,11 @@ class Booking {
 
   Booking({
     String? id,
+    required this.userId,
+    required this.userEmail,
+    required this.userName,
     required this.location,
     required this.dateTime,
-    required this.userId,
     required this.roomType,
     required this.features,
     this.roomId,
@@ -44,9 +48,11 @@ class Booking {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'userId': userId,
+      'userEmail': userEmail,
+      'userName': userName,
       'location': location,
       'dateTime': dateTime,
-      'userId': userId,
       'roomType': _roomTypeToString(roomType),
       'features': features.map((f) => _featureToString(f)).toList(),
       'roomId': roomId,
@@ -61,11 +67,13 @@ class Booking {
   factory Booking.fromMap(Map<String, dynamic> map) {
     return Booking(
       id: map['id'],
+      userId: map['userId'],
+      userEmail: map['userEmail'] ?? 'No Email',
+      userName: map['userName'] ?? 'Unknown User',
       location: map['location'],
       dateTime: map['dateTime'] is Timestamp 
           ? (map['dateTime'] as Timestamp).toDate() 
           : DateTime.parse(map['dateTime'].toString()),
-      userId: map['userId'],
       roomType: _stringToRoomType(map['roomType']),
       features:
           (map['features'] as List?)?.map((f) => _stringToFeature(f)).toList() ??
