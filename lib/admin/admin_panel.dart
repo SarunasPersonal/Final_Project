@@ -1,8 +1,7 @@
-// lib/admin/admin_panel.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_ucs_app/constants.dart';
 import 'package:flutter_ucs_app/admin/dashboard_screen.dart';
-import 'package:flutter_ucs_app/admin/bookings_management_screen.dart';
+import 'package:flutter_ucs_app/admin/bookings_management_screen.dart'; // Correct import
 import 'package:flutter_ucs_app/admin/users_management_screen.dart';
 import 'package:flutter_ucs_app/admin/rooms_management_screen.dart';
 import 'package:flutter_ucs_app/services/firebase_auth_service.dart';
@@ -25,12 +24,12 @@ class _AdminPanelState extends State<AdminPanel> {
   @override
   void initState() {
     super.initState();
-    // Initialize screens - now using all the imported screens
+    // Initialize screens - correctly using BookingsManagementScreen
     _screens = [
       const DashboardScreen(),
-      const BookingsManagementScreen(),
-      const UsersManagementScreen(),  // Using the imported screen
-      const RoomsManagementScreen(),  // Using the imported screen
+      const BookingsManagementScreen(),  // Using the class from bookings_management_screen.dart
+      const UsersManagementScreen(),
+      const RoomsManagementScreen(),
     ];
   }
 
